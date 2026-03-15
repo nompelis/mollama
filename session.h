@@ -30,6 +30,7 @@ struct session {
 
     struct message messages[MAX_MESSAGES];
     int message_count;
+    int prompt_token_count;
 };
 
 /* lifecycle */
@@ -45,6 +46,10 @@ int session_delete(uint64_t id);
 /* utilities */
 
 void session_touch(struct session *s);
+
+#ifdef _DEBUG_
+void display_session( struct session *s );
+#endif
 
 #endif
 

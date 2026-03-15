@@ -12,6 +12,7 @@ enum role {
 struct message {
     uint8_t role;
     char *content;
+    int token_count;
 };
 
 #endif

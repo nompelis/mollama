@@ -8,6 +8,24 @@
 static struct session sessions[NS];
 static pthread_mutex_t table_lock = PTHREAD_MUTEX_INITIALIZER;
 
+#ifdef _DEBUG_
+void display_session( struct session *s )
+{
+   if (!s) return;
+
+    fprintf( stdout, "  [DEBUG]  Session %ld chat \n", s->id );
+    for (int i = 0; i < s->message_count; i++) {
+        if (s->messages[i].content)
+            fprintf( stdout, "  (%d)  Role: \"%s\"  message: \"%s\"\n", i,
+                      s->messages[i].role == ROLE_SYSTEM ? "SYSTEM" :
+                      s->messages[i].role == ROLE_USER ? "USER" :
+                      s->messages[i].role == ROLE_ASSISTANT ? "ASSISTANT" :
+                      "(unknown)", 
+                      s->messages[i].content );
+    }
+}
+#endif
+
 static uint64_t now_sec(void)
 {
     return (uint64_t)time(NULL);
@@ -188,7 +206,7 @@ int session_delete(uint64_t id)
 
     pthread_mutex_unlock(&table_lock);
 
-    fprintf( stdout, " [Error]  Failed to delete session with id: %d \n", id );
+    fprintf( stdout, " [Error]  Failed to delete session with id: %ld \n", id );
     return -1;
 }
 

@@ -12,6 +12,8 @@
 #include "config.h"
 #include "json.h"
 #include "session.h"
+#include "chat.h"
+#include "prompt_builder.h"
 
 struct worker_arg {
     int client_fd;
@@ -287,6 +289,7 @@ static int handle_delete_session(int fd, const char *path)
 
 static int handle_post_chat(int fd, char *body)
 {
+    fprintf( stdout, " [DEBUG]  Got HTTP body: -->%s<--\n", body );
     struct json_request req;
 
     if (json_parse_chat(body, &req) != 0)
@@ -299,47 +302,44 @@ static int handle_post_chat(int fd, char *body)
     if (!s)
         return send_error_json(fd, 404, "Not Found", "invalid_session");
 
-    /*
-     * Stub behavior for now:
-     * later this is where we will append the user message,
-     * tokenize, call inference, append assistant message, etc.
-     */
+    /* store user message */
 
-    int rc = 0;
+    if (chat_add_user_message(s, req.prompt) != 0) {
+        pthread_mutex_unlock(&s->lock);
+        return send_error_json(fd, 409, "Conflict", "message_limit_exceeded");
+    }
+#ifdef _DEBUG_
+    display_session( s );
+    char prompt[16384];
+    prompt_build(s, prompt, sizeof(prompt) );
+    fprintf( stdout, " [DEBUG]  Prompt:\n%s\n", prompt );
+#endif
+
+    /* shim response */
+
+    const char *response = "This is a shim.";
+
+    if (chat_add_assistant_message(s, response) != 0) {
+        pthread_mutex_unlock(&s->lock);
+        return send_error_json(fd, 409, "Conflict", "message_limit_exceeded");
+    }
+
+    /* stream response */
 
     if (send_stream_header(fd) != 0) {
-        rc = -1;
-        goto out;
+        pthread_mutex_unlock(&s->lock);
+        return -1;
     }
 
-    if (send_stream_fragment(fd, "local", "This ", 0) != 0) {
-        rc = -1;
-        goto out;
-    }
+    send_stream_fragment(fd, "local", "This ", 0);
+    send_stream_fragment(fd, "local", "is ", 0);
+    send_stream_fragment(fd, "local", "a ", 0);
+    send_stream_fragment(fd, "local", "shim.", 0);
+    send_stream_fragment(fd, "local", "", 1);
 
-    if (send_stream_fragment(fd, "local", "is ", 0) != 0) {
-        rc = -1;
-        goto out;
-    }
-
-    if (send_stream_fragment(fd, "local", "a ", 0) != 0) {
-        rc = -1;
-        goto out;
-    }
-
-    if (send_stream_fragment(fd, "local", "shim.", 0) != 0) {
-        rc = -1;
-        goto out;
-    }
-
-    if (send_stream_fragment(fd, "local", "", 1) != 0) {
-        rc = -1;
-        goto out;
-    }
-
-out:
     pthread_mutex_unlock(&s->lock);
-    return rc;
+
+    return 0;
 }
 
 static void *worker_main(void *arg)
