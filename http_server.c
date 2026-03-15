@@ -14,6 +14,9 @@
 #include "session.h"
 #include "chat.h"
 #include "prompt_builder.h"
+#include "inference.h"
+
+static struct inference_engine *g_engine = NULL;
 
 struct worker_arg {
     int client_fd;
@@ -287,6 +290,60 @@ static int handle_delete_session(int fd, const char *path)
     return send_json_response(fd, 200, "OK", "{\"deleted\":true}");
 }
 
+
+struct stream_ctx {
+    int fd;
+    char *buffer;
+    size_t len;
+    size_t cap;
+};
+
+static int stream_buf_append(struct stream_ctx *ctx, const char *text)
+{
+    size_t n = strlen(text);
+
+    if (ctx->len + n + 1 > ctx->cap) {
+
+        size_t newcap = ctx->cap ? ctx->cap * 2 : 1024;
+
+        while (newcap < ctx->len + n + 1)
+            newcap *= 2;
+
+        char *p = realloc(ctx->buffer, newcap);
+        if (!p)
+            return -1;
+
+        ctx->buffer = p;
+        ctx->cap = newcap;
+    }
+
+    memcpy(ctx->buffer + ctx->len, text, n);
+
+    ctx->len += n;
+    ctx->buffer[ctx->len] = '\0';
+
+    return 0;
+}
+
+static int stream_callback(
+    const char *text,
+    int done,
+    void *user
+)
+{
+    struct stream_ctx *ctx = user;
+
+    if (stream_buf_append(ctx, text) != 0)
+        return -1;
+
+    /* stream to client */
+
+    if (send_stream_fragment(ctx->fd, "local", text, done) != 0)
+        return -1;
+
+    return 0;
+}
+
 static int handle_post_chat(int fd, char *body)
 {
     fprintf( stdout, " [DEBUG]  Got HTTP body: -->%s<--\n", body );
@@ -308,34 +365,50 @@ static int handle_post_chat(int fd, char *body)
         pthread_mutex_unlock(&s->lock);
         return send_error_json(fd, 409, "Conflict", "message_limit_exceeded");
     }
+
+    char prompt[16384];
+    if (prompt_build(s, prompt, sizeof(prompt)) < 0) {
+        pthread_mutex_unlock(&s->lock);
+        return send_error_json(fd, 500, "Internal Server Error", "prompt_build_failed");
+    }
 #ifdef _DEBUG_
     display_session( s );
-    char prompt[16384];
-    prompt_build(s, prompt, sizeof(prompt) );
-    fprintf( stdout, " [DEBUG]  Prompt:\n%s\n", prompt );
+    fprintf( stdout, " [DEBUG]  Prompt:\n-----\n%s\n-----\n", prompt );
 #endif
 
-    /* shim response */
-
-    const char *response = "This is a shim.";
-
-    if (chat_add_assistant_message(s, response) != 0) {
+    if (inference_update_prompt_tokens(g_engine, s, prompt) < 0) {
         pthread_mutex_unlock(&s->lock);
-        return send_error_json(fd, 409, "Conflict", "message_limit_exceeded");
+        return send_error_json(fd, 500, "Internal Server Error", "token_update_failed");
     }
 
-    /* stream response */
+    if (s->prompt_token_count > MAX_CONTEXT) {
+        pthread_mutex_unlock(&s->lock);
+        return send_error_json(
+            fd,
+            409,
+            "Conflict",
+            "context_length_exceeded"
+        );
+    }
+
+    /* stream response as it is generated fragment-by-fragment */
+
+    s->generated_token_count = 0;
+
+    struct stream_ctx ctx = { .fd=fd, .len=0, .cap=0, .buffer=NULL };
 
     if (send_stream_header(fd) != 0) {
         pthread_mutex_unlock(&s->lock);
         return -1;
     }
 
-    send_stream_fragment(fd, "local", "This ", 0);
-    send_stream_fragment(fd, "local", "is ", 0);
-    send_stream_fragment(fd, "local", "a ", 0);
-    send_stream_fragment(fd, "local", "shim.", 0);
-    send_stream_fragment(fd, "local", "", 1);
+    inference_generate(g_engine, s, prompt, stream_callback, &ctx);
+
+    /* store assistant message */
+
+    chat_add_assistant_message(s, ctx.buffer ? ctx.buffer : "");
+
+    if (ctx.buffer) free(ctx.buffer);
 
     pthread_mutex_unlock(&s->lock);
 
@@ -398,8 +471,10 @@ static void *worker_main(void *arg)
     return NULL;
 }
 
-int http_server_run(void)
+int http_server_run(struct inference_engine *engine)
 {
+    g_engine = engine;
+
     int server_fd = -1;
     int opt = 1;
     struct sockaddr_in addr;

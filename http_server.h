@@ -1,7 +1,9 @@
 #ifndef HTTP_SERVER_H
 #define HTTP_SERVER_H
 
-int http_server_run(void);
+#include "inference.h"
+
+int http_server_run(struct inference_engine *engine);
 
 #endif
 

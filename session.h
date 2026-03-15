@@ -19,6 +19,8 @@ struct session {
 
     int tokens[MAX_CONTEXT];
     int token_count;
+    int prompt_token_count;
+    int generated_token_count;
 
     /* KV cache */
 
@@ -30,7 +32,6 @@ struct session {
 
     struct message messages[MAX_MESSAGES];
     int message_count;
-    int prompt_token_count;
 };
 
 /* lifecycle */

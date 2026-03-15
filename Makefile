@@ -9,5 +9,7 @@ all:
         http_server.c \
         chat.c \
         prompt_builder.c \
+        tokenizer.c \
+        inference.c \
             main.c -lpthread
 

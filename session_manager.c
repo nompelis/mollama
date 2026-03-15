@@ -4,6 +4,7 @@
 #include <time.h>
 
 #include "session.h"
+#include "tokenizer.h"
 
 static struct session sessions[NS];
 static pthread_mutex_t table_lock = PTHREAD_MUTEX_INITIALIZER;
