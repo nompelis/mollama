@@ -14,5 +14,7 @@ all:
         inference.c \
         vocab.c \
         bpe.c \
+        token_ring.c \
+        sampler.c \
             main.c -lpthread
 

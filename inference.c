@@ -3,11 +3,27 @@
 #include <time.h>
 
 #include "inference.h"
-#include "inference.h"
+#include "token_ring.h"
+#include "sampler.h"
 
 struct inference_engine {
     struct tokenizer *tokenizer;
 };
+
+struct inference_ctx {
+    struct tokenizer *tok;
+    struct token_ring *ring;
+    struct sampler *sampler;
+
+    struct session *session;
+
+    token_callback callback;
+    void *cb_ctx;
+
+    float *logits;
+    int generated;
+};
+
 
 struct inference_engine *inference_create(struct tokenizer *tokenizer)
 {
@@ -27,12 +43,30 @@ void inference_destroy(struct inference_engine *e)
     free(e);
 }
 
+static int load_prompt_into_ring(
+    struct tokenizer *tok,
+    struct token_ring *ring,
+    const char *prompt
+)
+{
+    token_id buf[512];
+
+    int n = tokenizer_encode(tok, prompt, buf, 512);
+    if (n < 0)
+        return -1;
+
+    for (int i = 0; i < n; i++)
+        token_ring_push(ring, buf[i]);
+
+    return n;
+}
+
 int inference_generate(
     struct inference_engine *e,
     struct session *s,
     const char *prompt,
     token_callback cb,
-    void *ctx
+    void *cb_ctx
 )
 {
     struct tokenizer *t = e->tokenizer;
@@ -42,40 +76,54 @@ int inference_generate(
     token_id bos_id = tokenizer_bos_id(t);
     token_id unk_id = tokenizer_unk_id(t);
 
-    int generated = 0;
+    struct token_ring *ring = token_ring_create(2048);
+    if (!ring)
+        return -1;
+
+    struct sampler *sampler = sampler_create();
+    if (!sampler)
+        return -1;
+
+    load_prompt_into_ring(t, ring, prompt);
+
+    // We do not need this (remove in the future)
+    struct inference_ctx ctx = { .tok=t, .ring=ring, .sampler=sampler,
+                                 .session=s,
+                                 .callback = cb, .cb_ctx = cb_ctx,
+                                 .logits=NULL, .generated=0 };
+
+    ctx.logits = (float*) malloc(sizeof(float) * vocab_size);
+    if (!ctx.logits)
+        return -1;
 
     (void)prompt;
-
-//Randomize on the fly
-//srand(time(NULL));
 
     while (1) {
 
         token_id id;
 
-        if (generated >= 5) {
+        if (ctx.generated >= 5) {
             id = eos_id;
         } else {
 
             /* draw random token */
+            /* uses the sampler, like real inference would */
 
-            while (1) {
+            for (int i = 0; i < vocab_size; i++)
+                ctx.logits[i] = (float)rand();
 
-                id = rand() % vocab_size;
+            id = sampler_sample(ctx.sampler, ctx.logits,
+                                vocab_size, bos_id, eos_id, unk_id);
 
-                if (id == bos_id)
-                    continue;
-
-                if (id == unk_id)
-                    continue;
-
-                break;
-            }
         }
+
+        /* push token to context */
+
+        token_ring_push(ctx.ring, id);
 
         /* decode token */
 
-        char piece[64];
+        char piece[256];
 
         int len = tokenizer_decode(t, id, piece, sizeof(piece));
         if (len < 0)
@@ -83,52 +131,26 @@ int inference_generate(
 
         /* stream piece */
 
-        cb(piece, 0, ctx);
+        cb(piece, 0, cb_ctx);
 
         /* update session token accounting */
 
         s->token_count++;
         s->generated_token_count++;
 
-        generated++;
+        ctx.generated++;
 
         if (id == eos_id) {
-            cb("", 1, ctx);
+            cb("", 1, cb_ctx);
             break;
         }
     }
 
+    free(ctx.logits);
+    sampler_destroy(sampler);
+    token_ring_destroy(ring);
+
     return 0;
-}
-
-int inference_update_session_tokens(
-    struct inference_engine *e,
-    struct session *s
-)
-{
-    int total = 0;
-
-    if (!e || !s)
-        return -1;
-
-    for (int i = 0; i < s->message_count; i++) {
-
-        struct message *m = &s->messages[i];
-
-        int n = tokenizer_count(e->tokenizer, m->content);
-
-        if (n < 0)
-            return -1;
-
-        m->token_count = n;
-
-        total += n;
-    }
-
-    s->token_count = total;
-    s->prompt_token_count = total;
-
-    return total;
 }
 
 int inference_update_prompt_tokens(

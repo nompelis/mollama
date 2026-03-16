@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include "tokenizer.h"
 #include "inference.h"
 #include "session.h"
@@ -17,6 +18,7 @@ int main(void)
     if (!engine)
         return 1;
 
+    fprintf( stdout, " [DEBUG]  Driver starting the server \n" );
     return http_server_run(engine);
 }
 

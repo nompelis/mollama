@@ -31,11 +31,6 @@ int inference_generate(
     void *user
 );
 
-int inference_update_session_tokens(
-    struct inference_engine *e,
-    struct session *s
-);
-
 int inference_update_prompt_tokens(
     struct inference_engine *e,
     struct session *s,

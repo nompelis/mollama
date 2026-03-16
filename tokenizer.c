@@ -437,6 +437,9 @@ int tokenizer_count(
     const char *text
 )
 {
+#ifdef _DEBUG_
+    fprintf( stdout, " [DEBUG]  Tokenizer count \n" );
+#endif
     token_id tmp[4096];
 
     return tokenizer_encode(t, text, tmp, 4096);
