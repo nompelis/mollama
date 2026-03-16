@@ -12,5 +12,5 @@ set num = $argv[1]
 
  curl -vvv http://localhost:11434/api/chat -X POST \
       -H "Content-Type: application/json" \
-      -d '{"session_id": '$num', "message": "Hello my little friend!"}'
+      -d '{"session_id": '$num', "message": "Hello shim world."}'
 

@@ -1,6 +1,7 @@
 CC = gcc
 COPTS = -Wall -g
  COPTS += -D _DEBUG_
+ COPTS += -D _DEBUG2_
 
 all:
 	$(CC) $(COPTS) \
@@ -11,5 +12,7 @@ all:
         prompt_builder.c \
         tokenizer.c \
         inference.c \
+        vocab.c \
+        bpe.c \
             main.c -lpthread
 

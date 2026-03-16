@@ -402,6 +402,9 @@ static int handle_post_chat(int fd, char *body)
         return -1;
     }
 
+#ifdef _DEBUG_
+    fprintf( stdout, " [DEBUG]  Http server calling inference/streaming\n" );
+#endif
     inference_generate(g_engine, s, prompt, stream_callback, &ctx);
 
     /* store assistant message */

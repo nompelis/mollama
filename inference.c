@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
+#include "inference.h"
 #include "inference.h"
 
 struct inference_engine {
@@ -30,41 +32,74 @@ int inference_generate(
     struct session *s,
     const char *prompt,
     token_callback cb,
-    void *user
+    void *ctx
 )
 {
-    (void)e;
+    struct tokenizer *t = e->tokenizer;
+
+    int vocab_size = tokenizer_vocab_size(t);
+    token_id eos_id = tokenizer_eos_id(t);
+    token_id bos_id = tokenizer_bos_id(t);
+    token_id unk_id = tokenizer_unk_id(t);
+
+    int generated = 0;
+
     (void)prompt;
 
-    const char *parts[] = {
-        "This ",
-        "is ",
-        "a ",
-        "shim."
-    };
+//Randomize on the fly
+//srand(time(NULL));
 
-    int n = sizeof(parts) / sizeof(parts[0]);
+    while (1) {
 
-    for (int i = 0; i < n; i++) {
+        token_id id;
 
-        int tok = tokenizer_count(e->tokenizer, parts[i]);
+        if (generated >= 5) {
+            id = eos_id;
+        } else {
 
-        if (tok > 0)
-            s->generated_token_count += tok;
+            /* draw random token */
 
-        s->token_count =
-            s->prompt_token_count +
-            s->generated_token_count;
+            while (1) {
 
-        if (cb(parts[i], 0, user) != 0)
+                id = rand() % vocab_size;
+
+                if (id == bos_id)
+                    continue;
+
+                if (id == unk_id)
+                    continue;
+
+                break;
+            }
+        }
+
+        /* decode token */
+
+        char piece[64];
+
+        int len = tokenizer_decode(t, id, piece, sizeof(piece));
+        if (len < 0)
             return -1;
-    }
 
-    cb("", 1, user);
+        /* stream piece */
+
+        cb(piece, 0, ctx);
+
+        /* update session token accounting */
+
+        s->token_count++;
+        s->generated_token_count++;
+
+        generated++;
+
+        if (id == eos_id) {
+            cb("", 1, ctx);
+            break;
+        }
+    }
 
     return 0;
 }
-
 
 int inference_update_session_tokens(
     struct inference_engine *e,
