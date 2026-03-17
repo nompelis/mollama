@@ -8,6 +8,7 @@
 
 struct inference_engine {
     struct tokenizer *tokenizer;
+    struct transformer *transformer;
 };
 
 struct inference_ctx {
@@ -20,12 +21,15 @@ struct inference_ctx {
     token_callback callback;
     void *cb_ctx;
 
+    token_id *tokens;
     float *logits;
+    int context_length;
     int generated;
 };
 
 
-struct inference_engine *inference_create(struct tokenizer *tokenizer)
+struct inference_engine *inference_create(struct tokenizer *tokenizer,
+                                          struct transformer *transformer)
 {
     struct inference_engine *e;
 
@@ -34,6 +38,7 @@ struct inference_engine *inference_create(struct tokenizer *tokenizer)
         return NULL;
 
     e->tokenizer = tokenizer;
+    e->transformer = transformer;
 
     return e;
 }
@@ -76,7 +81,9 @@ int inference_generate(
     token_id bos_id = tokenizer_bos_id(t);
     token_id unk_id = tokenizer_unk_id(t);
 
-    struct token_ring *ring = token_ring_create(2048);
+    int context_length = transformer_get_context_length(e->transformer);
+
+    struct token_ring *ring = token_ring_create(context_length);
     if (!ring)
         return -1;
 
@@ -86,11 +93,21 @@ int inference_generate(
 
     load_prompt_into_ring(t, ring, prompt);
 
-    // We do not need this (remove in the future)
+    // Items the inference needs
     struct inference_ctx ctx = { .tok=t, .ring=ring, .sampler=sampler,
                                  .session=s,
-                                 .callback = cb, .cb_ctx = cb_ctx,
-                                 .logits=NULL, .generated=0 };
+                                 .callback=cb, .cb_ctx=cb_ctx,
+                                 .tokens=NULL, .logits=NULL,
+                                 .context_length=context_length, .generated=0 };
+
+    // extracting tokens from ring buffer to a contiguous array
+    ctx.tokens = (token_id*) malloc(sizeof(token_id) * ctx.context_length);
+    if (!ctx.tokens)
+        return -1;
+
+    int ring_size = token_ring_size(ring);
+    for (int i = 0; i < ring_size; ++i)
+        token_ring_get(ring, i, &(ctx.tokens[i]));
 
     ctx.logits = (float*) malloc(sizeof(float) * vocab_size);
     if (!ctx.logits)
@@ -112,9 +129,12 @@ int inference_generate(
             for (int i = 0; i < vocab_size; i++)
                 ctx.logits[i] = (float)rand();
 
+            /* over-write with real inference */
+            transformer_forward(e->transformer,
+                                ctx.tokens, ring_size, ctx.logits);
+
             id = sampler_sample(ctx.sampler, ctx.logits,
                                 vocab_size, bos_id, eos_id, unk_id);
-
         }
 
         /* push token to context */
@@ -146,6 +166,7 @@ int inference_generate(
         }
     }
 
+    free(ctx.tokens);
     free(ctx.logits);
     sampler_destroy(sampler);
     token_ring_destroy(ring);

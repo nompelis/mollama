@@ -2,6 +2,7 @@
 #define INFERENCE_H
 
 #include "tokenizer.h"
+#include "transformer.h"
 #include "session.h"
 
 struct inference_engine;
@@ -9,7 +10,7 @@ struct inference_engine;
 /* lifecycle */
 
 struct inference_engine *
-inference_create(struct tokenizer *tokenizer);
+inference_create(struct tokenizer *tokenizer, struct transformer *transformer);
 
 void inference_destroy(struct inference_engine *e);
 
