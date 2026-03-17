@@ -13,6 +13,12 @@ struct block {
 
     float *w1;
     float *w2;
+
+    float *ln1_g;
+    float *ln1_b;
+
+    float *ln2_g;
+    float *ln2_b;
 };
 
 struct transformer {
@@ -101,26 +107,43 @@ struct transformer *transformer_create(const struct model_config *cfg)
     fill_rand(t->lm_head, H * V);
 
     for (int i = 0; i < L; i++) {
-        t->blocks[i].wq = malloc(sizeof(float) * H * H);
-        t->blocks[i].wk = malloc(sizeof(float) * H * H);
-        t->blocks[i].wv = malloc(sizeof(float) * H * H);
-        t->blocks[i].wo = malloc(sizeof(float) * H * H);
+        struct block *b = &(t->blocks[i]);
 
-        t->blocks[i].w1 = malloc(sizeof(float) * H * F);
-        t->blocks[i].w2 = malloc(sizeof(float) * F * H);
+        b->wq = malloc(sizeof(float) * H * H);
+        b->wk = malloc(sizeof(float) * H * H);
+        b->wv = malloc(sizeof(float) * H * H);
+        b->wo = malloc(sizeof(float) * H * H);
 
-        if (!t->blocks[i].wq || !t->blocks[i].wk || !t->blocks[i].wv ||
-            !t->blocks[i].wo || !t->blocks[i].w1 || !t->blocks[i].w2) {
+        b->w1 = malloc(sizeof(float) * H * F);
+        b->w2 = malloc(sizeof(float) * F * H);
+
+        b->ln1_g = malloc(sizeof(float) * H);
+        b->ln1_b = malloc(sizeof(float) * H);
+        b->ln2_g = malloc(sizeof(float) * H);
+        b->ln2_b = malloc(sizeof(float) * H);
+
+
+        if (!b->wq || !b->wk || !b->wv ||
+            !b->wo || !b->w1 || !b->w2 ||
+            !b->ln1_g || !b->ln1_b ||
+            !b->ln2_g || !b->ln2_b ) {
             transformer_destroy(t);
             return NULL;
         }
 
-        fill_rand(t->blocks[i].wq, H * H);
-        fill_rand(t->blocks[i].wk, H * H);
-        fill_rand(t->blocks[i].wv, H * H);
-        fill_rand(t->blocks[i].wo, H * H);
-        fill_rand(t->blocks[i].w1, H * F);
-        fill_rand(t->blocks[i].w2, F * H);
+        fill_rand(b->wq, H * H);
+        fill_rand(b->wk, H * H);
+        fill_rand(b->wv, H * H);
+        fill_rand(b->wo, H * H);
+        fill_rand(b->w1, H * F);
+        fill_rand(b->w2, F * H);
+
+         for (int j = 0; j < H; j++) {
+             b->ln1_g[j] = 1.0f;
+             b->ln1_b[j] = 0.0f;
+             b->ln2_g[j] = 1.0f;
+             b->ln2_b[j] = 0.0f;
+         }
     }
 
     return t;
@@ -139,6 +162,10 @@ void transformer_destroy(struct transformer *t)
             free(t->blocks[i].wo);
             free(t->blocks[i].w1);
             free(t->blocks[i].w2);
+            free(t->blocks[i].ln1_g);
+            free(t->blocks[i].ln1_b);
+            free(t->blocks[i].ln2_g);
+            free(t->blocks[i].ln2_b);
         }
     }
 
@@ -227,6 +254,36 @@ static void softmax_inplace(float *x, int n)
         x[i] /= sum;
 }
 
+static void layernorm(
+    float *x,
+    const float *g,
+    const float *b,
+    float *out,
+    int n
+)
+{
+    const float eps = 1e-5f;
+
+    float mean = 0.0f;
+    for (int i = 0; i < n; i++)
+        mean += x[i];
+    mean /= (float) n;
+
+    float var = 0.0f;
+    for (int i = 0; i < n; i++) {
+        float d = x[i] - mean;
+        var += d * d;
+    }
+    var /= (float) n;
+
+    float inv = 1.0f / sqrtf(var + eps);
+
+    for (int i = 0; i < n; i++) {
+        float y = (x[i] - mean) * inv;
+        out[i] = g[i] * y + b[i];
+    }
+}
+
 static void attention_forward(
     struct transformer *t,
     struct block *b,
@@ -239,6 +296,10 @@ static void attention_forward(
     /* 1. Compute Q, K, V for all positions */
     for (int pos = 0; pos < n_tokens; pos++) {
         float *xrow = &t->x[pos * H];
+
+        layernorm(xrow, b->ln1_g, b->ln1_b, t->tmp, H);
+        xrow = t->tmp;    // re-assign to temp array
+
         float *qrow = &t->q[pos * H];
         float *krow = &t->k[pos * H];
         float *vrow = &t->v[pos * H];
@@ -281,7 +342,6 @@ static void attention_forward(
     }
 }
 
-
 void block_forward(
     struct transformer *t,
     struct block *b,
@@ -299,6 +359,9 @@ void block_forward(
     /* feed-forward per token */
     for (int pos = 0; pos < n_tokens; pos++) {
         float *xrow = &t->x[pos * H];
+
+        layernorm(xrow, b->ln2_g, b->ln2_b, t->tmp, H);
+        xrow = t->tmp;    // re-assign to temp array
 
         matvec(xrow, b->w1, t->ff1, H, F);
 
