@@ -17,5 +17,5 @@ all:
         token_ring.c \
         sampler.c \
         transformer.c \
-            main.c -lpthread
+            main.c -lpthread -lm
 

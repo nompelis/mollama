@@ -27,6 +27,11 @@ struct transformer {
     float *x;         /* context_length x hidden_size */
     float *attn;      /* context_length x hidden_size */
     float *ff;        /* context_length x hidden_size */
+    float *k, *q, *v; /* context_length x hidden_size each */
+    float *score;     /* context_length */
+    float *tmp;       /* hidden_size */
+    float *ff1;       /* expansion to ff_size */
+    float *ff2;       /* contraction to hidden_size */
 };
 
 int transformer_get_context_length(struct transformer *t)
@@ -77,6 +82,14 @@ struct transformer *transformer_create(const struct model_config *cfg)
     t->x    = malloc(sizeof(float) * C * H);
     t->attn = malloc(sizeof(float) * C * H);
     t->ff   = malloc(sizeof(float) * C * H);
+
+    t->k    = malloc(sizeof(float) * C * H);
+    t->q    = malloc(sizeof(float) * C * H);
+    t->v    = malloc(sizeof(float) * C * H);
+    t->score = malloc(sizeof(float) * C);
+    t->tmp   = malloc(sizeof(float) * H);
+    t->ff1   = malloc(sizeof(float) * F);
+    t->ff2   = malloc(sizeof(float) * H);
 
     if (!t->token_embedding || !t->lm_head || !t->blocks ||
         !t->x || !t->attn || !t->ff) {
@@ -135,6 +148,13 @@ void transformer_destroy(struct transformer *t)
     free(t->x);
     free(t->attn);
     free(t->ff);
+    free(t->k);
+    free(t->q);
+    free(t->v);
+    free(t->score);
+    free(t->tmp);
+    free(t->ff1);
+    free(t->ff2);
     free(t);
 }
 
@@ -162,52 +182,134 @@ static float relu(float x)
     return x > 0.0f ? x : 0.0f;
 }
 
+static float dot_product(const float *a, const float *b, int n)
+{
+    float s = 0.0f;
+
+    for (int i = 0; i < n; i++)
+        s += a[i] * b[i];
+
+    return s;
+}
+
+static void add_inplace(float *dst, const float *src, int n)
+{
+    for (int i = 0; i < n; i++)
+        dst[i] += src[i];
+}
+
+static void zero_vec(float *x, int n)
+{
+    for (int i = 0; i < n; i++)
+        x[i] = 0.0f;
+}
+
+static void softmax_inplace(float *x, int n)
+{
+    float maxv = x[0];
+
+    for (int i = 1; i < n; i++) {
+        if (x[i] > maxv)
+            maxv = x[i];
+    }
+
+    float sum = 0.0f;
+
+    for (int i = 0; i < n; i++) {
+        x[i] = expf(x[i] - maxv);
+        sum += x[i];
+    }
+
+    if (sum == 0.0f)
+        return;
+
+    for (int i = 0; i < n; i++)
+        x[i] /= sum;
+}
+
+static void attention_forward(
+    struct transformer *t,
+    struct block *b,
+    int n_tokens
+)
+{
+    int H = t->cfg.hidden_size;
+    float scale = 1.0f / sqrtf((float)H);
+
+    /* 1. Compute Q, K, V for all positions */
+    for (int pos = 0; pos < n_tokens; pos++) {
+        float *xrow = &t->x[pos * H];
+        float *qrow = &t->q[pos * H];
+        float *krow = &t->k[pos * H];
+        float *vrow = &t->v[pos * H];
+
+        matvec(xrow, b->wq, qrow, H, H);
+        matvec(xrow, b->wk, krow, H, H);
+        matvec(xrow, b->wv, vrow, H, H);
+    }
+
+    /* 2. Causal attention for each position */
+    for (int tpos = 0; tpos < n_tokens; tpos++) {
+        float *qrow = &t->q[tpos * H];
+        float *out  = &t->attn[tpos * H];
+
+        zero_vec(out, H);
+
+        for (int j = 0; j <= tpos; j++) {
+            float *krow = &t->k[j * H];
+            t->score[j] = dot_product(qrow, krow, H) * scale;
+        }
+
+        softmax_inplace(t->score, tpos + 1);
+
+        for (int j = 0; j <= tpos; j++) {
+            float *vrow = &t->v[j * H];
+            float a = t->score[j];
+
+            for (int h = 0; h < H; h++)
+                out[h] += a * vrow[h];
+        }
+    }
+
+    /* 3. Output projection + residual add into x */
+    for (int pos = 0; pos < n_tokens; pos++) {
+        float *attn_row = &t->attn[pos * H];
+        float *xrow     = &t->x[pos * H];
+
+        matvec(attn_row, b->wo, t->tmp, H, H);
+        add_inplace(xrow, t->tmp, H);
+    }
+}
+
+
 void block_forward(
     struct transformer *t,
     struct block *b,
-    float *x_row,
-    float *tmp1,
-    float *tmp2
+    int n_tokens
 )
 {
 #ifdef _DEBUG3_
-    fprintf( stdout, " [DEBUG]  Transformer forward\n" );
+    fprintf( stdout, " [DEBUG]  Transformer block forward (all tokens)\n" );
 #endif
     int H = t->cfg.hidden_size;
     int F = t->cfg.ff_size;
 
-    /* placeholder "attention-like" transform */
-    matvec(x_row, b->wq, tmp1, H, H);
-    matvec(tmp1, b->wo, tmp2, H, H);
+    attention_forward(t, b, n_tokens);
 
-    for (int i = 0; i < H; i++) {
-        x_row[i] += tmp2[i];
+    /* feed-forward per token */
+    for (int pos = 0; pos < n_tokens; pos++) {
+        float *xrow = &t->x[pos * H];
+
+        matvec(xrow, b->w1, t->ff1, H, F);
+
+        for (int i = 0; i < F; i++) {
+            if (t->ff1[i] < 0.0f)
+                t->ff1[i] = 0.0f;
+        }
+
+        matvec(t->ff1, b->w2, t->ff2, F, H);
+        add_inplace(xrow, t->ff2, H);
     }
-
-    /* feed-forward */
-    float *ff1 = malloc(sizeof(float) * F);
-    float *ff2 = malloc(sizeof(float) * H);
-
-    if (!ff1 || !ff2) {
-        free(ff1);
-        free(ff2);
-        return;
-    }
-
-    matvec(x_row, b->w1, ff1, H, F);
-
-    for (int i = 0; i < F; i++) {
-        ff1[i] = relu(ff1[i]);
-    }
-
-    matvec(ff1, b->w2, ff2, F, H);
-
-    for (int i = 0; i < H; i++) {
-        x_row[i] += ff2[i];
-    }
-
-    free(ff1);
-    free(ff2);
 }
 
 int transformer_forward(
@@ -250,13 +352,14 @@ int transformer_forward(
     }
 
     for (int l = 0; l < t->cfg.n_layers; l++) {
+#ifdef _DEBUG_
+       fprintf( stdout, " [DEBUG]  Transformer forward (layer: %d)\n", l );
+#endif
         for (int pos = 0; pos < n_tokens; pos++) {
             block_forward(
                 t,
                 &t->blocks[l],
-                &t->x[pos * H],
-                tmp1,
-                tmp2
+                n_tokens
             );
         }
     }
