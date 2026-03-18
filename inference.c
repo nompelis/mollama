@@ -113,48 +113,28 @@ int inference_generate(
     if (!ctx.logits)
         return -1;
 
-    (void)prompt;
+    // prefill-ing actually performs inference for the first "next token"
+    transformer_prefill(e->transformer, ctx.tokens, ring_size, ctx.logits);
+
+    // sample it
+    token_id id = sampler_sample(ctx.sampler, ctx.logits,
+                                 vocab_size, bos_id, eos_id, unk_id);
 
     while (1) {
 
-        token_id id;
-
-        if (ctx.generated >= 5) {
-            id = eos_id;
-        } else {
-
-            /* draw random token */
-            /* uses the sampler, like real inference would */
-
-            for (int i = 0; i < vocab_size; i++)
-                ctx.logits[i] = (float)rand();
-
-            /* over-write with real inference */
-            transformer_forward(e->transformer,
-                                ctx.tokens, ring_size, ctx.logits);
-
-            id = sampler_sample(ctx.sampler, ctx.logits,
-                                vocab_size, bos_id, eos_id, unk_id);
-        }
-
         /* push token to context */
-
         token_ring_push(ctx.ring, id);
 
         /* decode token */
-
         char piece[256];
-
         int len = tokenizer_decode(t, id, piece, sizeof(piece));
         if (len < 0)
             return -1;
 
         /* stream piece */
-
         cb(piece, 0, cb_ctx);
 
         /* update session token accounting */
-
         s->token_count++;
         s->generated_token_count++;
 
@@ -164,6 +144,14 @@ int inference_generate(
             cb("", 1, cb_ctx);
             break;
         }
+
+        if (ctx.generated >= 5) {
+            id = eos_id;
+        } else {
+            /* inference */
+            transformer_step(e->transformer, id, ctx.logits);
+        }
+
     }
 
     free(ctx.tokens);

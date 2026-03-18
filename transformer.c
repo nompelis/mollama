@@ -21,6 +21,12 @@ struct block {
     float *ln2_b;
 };
 
+struct kv_cache {
+    float *k;     /* context_length x hidden_size */
+    float *v;     /* context_length x hidden_size */
+    int len;
+};
+
 struct transformer {
     struct model_config cfg;
 
@@ -38,6 +44,8 @@ struct transformer {
     float *tmp;       /* hidden_size */
     float *ff1;       /* expansion to ff_size */
     float *ff2;       /* contraction to hidden_size */
+
+    struct kv_cache *cache;   /* n_layers */
 };
 
 int transformer_get_context_length(struct transformer *t)
@@ -144,6 +152,13 @@ struct transformer *transformer_create(const struct model_config *cfg)
              b->ln2_g[j] = 1.0f;
              b->ln2_b[j] = 0.0f;
          }
+    }
+
+    t->cache = calloc(cfg->n_layers, sizeof(struct kv_cache));
+    for (int l = 0; l < L; l++) {
+        t->cache[l].k = malloc(sizeof(float) * C * H);
+        t->cache[l].v = malloc(sizeof(float) * C * H);
+        t->cache[l].len = 0;
     }
 
     return t;
@@ -282,6 +297,14 @@ static void layernorm(
         float y = (x[i] - mean) * inv;
         out[i] = g[i] * y + b[i];
     }
+}
+
+void transformer_kv_reset(struct transformer *t)
+{
+    if (!t) return;
+
+    for (int l = 0; l < t->cfg.n_layers; l++)
+        t->cache[l].len = 0;
 }
 
 static void attention_forward(
@@ -442,6 +465,139 @@ int transformer_forward(
 
     free(tmp1);
     free(tmp2);
+
+    return 0;
+}
+
+int transformer_step(
+    struct transformer *t,
+    token_id tok,
+    float *logits
+)
+{
+    int H = t->cfg.hidden_size;
+    int F = t->cfg.ff_size;
+    int V = t->cfg.vocab_size;
+    int L = t->cfg.n_layers;
+
+    /* token position for this step (taken from the first layer) */
+    int pos = t->cache[0].len;
+
+    if (pos >= t->cfg.context_length)
+        return -1;
+
+    /* vector of present token */
+    float *xrow = &t->x[pos * H];
+
+    /* embedding */
+    memcpy(
+        xrow,
+        &t->token_embedding[tok * H],
+        sizeof(float) * H
+    );
+
+    for (int l = 0; l < L; l++) {
+
+        struct block *b = &t->blocks[l];
+        struct kv_cache *c = &t->cache[l];
+
+        /* LN1 */
+        layernorm(xrow, b->ln1_g, b->ln1_b, t->tmp, H);
+
+        /* compute Q */
+        matvec(t->tmp, b->wq, t->q, H, H);
+
+        /* compute K,V and store in cache */
+        float *k_store = &c->k[pos * H];
+        float *v_store = &c->v[pos * H];
+
+        matvec(t->tmp, b->wk, k_store, H, H);
+        matvec(t->tmp, b->wv, v_store, H, H);
+
+        float scale = 1.0f / sqrtf((float)H);
+
+        /* attention scores */
+        for (int j = 0; j <= pos; j++) {
+
+            float *k_j = &c->k[j * H];
+
+            float s = 0.0f;
+
+            for (int i = 0; i < H; i++)
+                s += t->q[i] * k_j[i];
+
+            t->score[j] = s * scale;
+        }
+
+        softmax_inplace(t->score, pos + 1);
+
+        /* weighted value sum */
+        for (int i = 0; i < H; i++)
+            t->attn[i] = 0.0f;
+
+        for (int j = 0; j <= pos; j++) {
+
+            float *v_j = &c->v[j * H];
+            float a = t->score[j];
+
+            for (int i = 0; i < H; i++)
+                t->attn[i] += a * v_j[i];
+        }
+
+        /* Wo projection */
+        matvec(t->attn, b->wo, t->tmp, H, H);
+
+        /* residual */
+        for (int i = 0; i < H; i++)
+            xrow[i] += t->tmp[i];
+
+        /* LN2 */
+        layernorm(xrow, b->ln2_g, b->ln2_b, t->tmp, H);
+
+        /* FFN */
+        matvec(t->tmp, b->w1, t->ff1, H, F);
+
+        for (int i = 0; i < F; i++)
+            if (t->ff1[i] < 0.0f)
+                t->ff1[i] = 0.0f;
+
+        matvec(t->ff1, b->w2, t->ff2, F, H);
+
+        /* residual */
+        for (int i = 0; i < H; i++)
+            xrow[i] += t->ff2[i];
+
+        /* advance current position (for this layer) to next token */
+        c->len++;
+    }
+
+    /* LM head projection */
+    for (int v = 0; v < V; v++) {
+
+        float s = 0.0f;
+
+        for (int i = 0; i < H; i++)
+            s += t->x[i] * t->lm_head[i * V + v];
+
+        logits[v] = s;
+    }
+
+    return 0;
+}
+
+int transformer_prefill(
+    struct transformer *t,
+    const token_id *tokens,
+    int n_tokens,
+    float *logits
+)
+{
+    transformer_kv_reset(t);
+
+    for (int i = 0; i < n_tokens; i++) {
+        if (transformer_step(t, tokens[i], logits) != 0)
+            return -1;
+    }
 
     return 0;
 }

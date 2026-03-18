@@ -28,6 +28,20 @@ int transformer_forward(
     float *logits
 );
 
+/* prefill and step */
+int transformer_prefill(
+    struct transformer *t,
+    const token_id *tokens,
+    int n_tokens,
+    float *logits
+);
+
+int transformer_step(
+    struct transformer *t,
+    token_id tok,
+    float *logits
+);
+
 int transformer_get_context_length(struct transformer *t);
 
 #endif
