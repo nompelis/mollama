@@ -15,14 +15,15 @@ int main(void)
   token_id tokens[100];//HACK
   tokenizer_encode(tok, "This is a shim.", tokens, 4096);//HACK
 
+    int hidden_size = 10, n_heads = 2, head_size = hidden_size / n_heads;
     struct model_config cfg = {
        .vocab_size = tokenizer_vocab_size(tok),
        .context_length = 2048,
        .n_layers = 1,
-       .n_heads = 1,
-       .hidden_size = 10,
-       .head_size = 10,
-       .ff_size = 20
+       .n_heads = n_heads,
+       .hidden_size = hidden_size,
+       .head_size = head_size,
+       .ff_size = 4 * hidden_size
     };
     struct transformer *trans = transformer_create(&cfg);
     if (!trans)

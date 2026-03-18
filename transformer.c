@@ -488,6 +488,8 @@ int transformer_step(
     int F = t->cfg.ff_size;
     int V = t->cfg.vocab_size;
     int L = t->cfg.n_layers;
+    int NH = t->cfg.n_heads;
+    int HS = t->cfg.head_size;
 
     /* token position for this step (taken from the first layer) */
     int pos = t->cache[0].len;
@@ -523,34 +525,39 @@ int transformer_step(
         matvec(t->tmp, b->wk, k_store, H, H);
         matvec(t->tmp, b->wv, v_store, H, H);
 
-        float scale = 1.0f / sqrtf((float)H);
+        float scale = 1.0f / sqrtf((float) HS);
 
-        /* attention scores */
-        for (int j = 0; j <= pos; j++) {
-
-            float *k_j = &c->k[j * H];
-
-            float s = 0.0f;
-
-            for (int i = 0; i < H; i++)
-                s += t->q[i] * k_j[i];
-
-            t->score[j] = s * scale;
-        }
-
-        softmax_inplace(t->score, pos + 1);
-
-        /* weighted value sum */
+        /* zero attn output */
         for (int i = 0; i < H; i++)
             t->attn[i] = 0.0f;
 
-        for (int j = 0; j <= pos; j++) {
+        /* attention scores */
+        for (int h = 0; h <= NH; h++) {
 
-            float *v_j = &c->v[j * H];
-            float a = t->score[j];
+            /* compute scores for this head */
+            for (int j = 0; j <= pos; j++) {
 
-            for (int i = 0; i < H; i++)
-                t->attn[i] += a * v_j[i];
+                float *k_j = &c->k[j * H + h * HS];
+
+                float s = 0.0f;
+
+                for (int i = 0; i < HS; i++)
+                    s += t->q[i] * k_j[i];
+
+                t->score[j] = s * scale;
+            }
+
+            softmax_inplace(t->score, pos + 1);
+
+            /* weighted sum for this head */
+            for (int j = 0; j <= pos; j++) {
+
+                float *v_j = &c->v[j * H + h * HS];
+                float a = t->score[j];
+
+                for (int i = 0; i < HS; i++)
+                    t->attn[i] += a * v_j[i];
+            }
         }
 
         /* Wo projection */
@@ -566,7 +573,7 @@ int transformer_step(
         /* FFN */
         matvec(t->tmp, b->w1, t->ff1, H, F);
 
-     // for (int i = 0; i < F; i++)
+     // for (int i = 0; i < F; i++)   // keep these here for future threading
      //     if (t->ff1[i] < 0.0f)
      //         t->ff1[i] = 0.0f;
         relu_inplace(t->ff1, F);
