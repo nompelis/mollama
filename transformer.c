@@ -219,10 +219,10 @@ static void matvec(
     }
 }
 
-static float relu(float x)
-{
-    return x > 0.0f ? x : 0.0f;
-}
+//static float relu(float x)
+//{
+//    return x > 0.0f ? x : 0.0f;
+//}
 
 static void relu_inplace(float *x, int n)
 {
@@ -396,7 +396,7 @@ void block_forward(
 
         matvec(xrow, b->w1, t->ff1, H, F);
 
-     // for (int i = 0; i < F; i++) {
+     // for (int i = 0; i < F; i++) {   // keep these here for future threading
      //     if (t->ff1[i] < 0.0f)
      //         t->ff1[i] = 0.0f;
      // }
