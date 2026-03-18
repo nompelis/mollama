@@ -224,6 +224,14 @@ static float relu(float x)
     return x > 0.0f ? x : 0.0f;
 }
 
+static void relu_inplace(float *x, int n)
+{
+    for (int i = 0; i < n; i++) {
+        if (x[i] < 0.0f)
+            x[i] = 0.0f;
+    }
+}
+
 static float dot_product(const float *a, const float *b, int n)
 {
     float s = 0.0f;
@@ -388,10 +396,11 @@ void block_forward(
 
         matvec(xrow, b->w1, t->ff1, H, F);
 
-        for (int i = 0; i < F; i++) {
-            if (t->ff1[i] < 0.0f)
-                t->ff1[i] = 0.0f;
-        }
+     // for (int i = 0; i < F; i++) {
+     //     if (t->ff1[i] < 0.0f)
+     //         t->ff1[i] = 0.0f;
+     // }
+        relu_inplace(t->ff1, F);
 
         matvec(t->ff1, b->w2, t->ff2, F, H);
         add_inplace(xrow, t->ff2, H);
@@ -557,9 +566,10 @@ int transformer_step(
         /* FFN */
         matvec(t->tmp, b->w1, t->ff1, H, F);
 
-        for (int i = 0; i < F; i++)
-            if (t->ff1[i] < 0.0f)
-                t->ff1[i] = 0.0f;
+     // for (int i = 0; i < F; i++)
+     //     if (t->ff1[i] < 0.0f)
+     //         t->ff1[i] = 0.0f;
+        relu_inplace(t->ff1, F);
 
         matvec(t->ff1, b->w2, t->ff2, F, H);
 
