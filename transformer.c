@@ -106,7 +106,9 @@ struct transformer *transformer_create(const struct model_config *cfg)
     t->ff2   = malloc(sizeof(float) * H);
 
     if (!t->token_embedding || !t->lm_head || !t->blocks ||
-        !t->x || !t->attn || !t->ff) {
+        !t->x || !t->attn || !t->ff ||
+        !t->k || !t->q || !t->v ||
+        !t->score || !t->tmp || !t->ff1 ||!t->ff2) {
         transformer_destroy(t);
         return NULL;
     }
@@ -130,9 +132,8 @@ struct transformer *transformer_create(const struct model_config *cfg)
         b->ln2_g = malloc(sizeof(float) * H);
         b->ln2_b = malloc(sizeof(float) * H);
 
-
-        if (!b->wq || !b->wk || !b->wv ||
-            !b->wo || !b->w1 || !b->w2 ||
+        if (!b->wq || !b->wk || !b->wv || !b->wo ||
+            !b->w1 || !b->w2 ||
             !b->ln1_g || !b->ln1_b ||
             !b->ln2_g || !b->ln2_b ) {
             transformer_destroy(t);
@@ -155,10 +156,19 @@ struct transformer *transformer_create(const struct model_config *cfg)
     }
 
     t->cache = calloc(cfg->n_layers, sizeof(struct kv_cache));
+    if(!t->cache) {
+        transformer_destroy(t);
+        return NULL;
+    }
     for (int l = 0; l < L; l++) {
         t->cache[l].k = malloc(sizeof(float) * C * H);
         t->cache[l].v = malloc(sizeof(float) * C * H);
         t->cache[l].len = 0;
+
+        if (!t->cache[l].k || !t->cache[l].v) {
+            transformer_destroy(t);
+            return NULL;
+        }
     }
 
     return t;
@@ -168,6 +178,21 @@ void transformer_destroy(struct transformer *t)
 {
     if (!t)
         return;
+
+    free(t->token_embedding);
+    free(t->lm_head);
+
+    free(t->x);
+    free(t->attn);
+    free(t->ff);
+
+    free(t->k);
+    free(t->q);
+    free(t->v);
+    free(t->score);
+    free(t->tmp);
+    free(t->ff1);
+    free(t->ff2);
 
     if (t->blocks) {
         for (int i = 0; i < t->cfg.n_layers; i++) {
@@ -183,22 +208,19 @@ void transformer_destroy(struct transformer *t)
             free(t->blocks[i].ln2_b);
         }
     }
-
     free(t->blocks);
-    free(t->token_embedding);
-    free(t->lm_head);
-    free(t->x);
-    free(t->attn);
-    free(t->ff);
-    free(t->k);
-    free(t->q);
-    free(t->v);
-    free(t->score);
-    free(t->tmp);
-    free(t->ff1);
-    free(t->ff2);
+
+    if (t->cache) {
+        for (int i = 0; i < t->cfg.n_layers; i++) {
+            free(t->cache[i].k);
+            free(t->cache[i].v);
+        }
+    }
+    free(t->cache);
+
     free(t);
 }
+
 
 static void matvec(
     const float *x,
