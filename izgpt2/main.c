@@ -285,8 +285,11 @@ int main( int argc, char *argv[] )
 {
     ao_gpt2_t *model = load_model("model.izgpt2");
   //ao_gpt2_t *model = load_model("fake.izgpt2");
+    destroy_model(model);
+  //sm_gpt2_t *sm = smload_model("model.izgpt2");
+  //ao_gpt2_t *model = sm->model;
 
-   dump_param1( model );
+// dump_param1( model );
 // dump_param2( model, 11 );
 // dump_param3( model, 0 );
 

@@ -1,4 +1,4 @@
-# C loader of the GPT2 model from HuggingFace
+# The C loader of the GPT2 model from HuggingFace
 
 This code uses Python and related libraries to retrieve the model weights
 from HuggingFace and bring them to a file that adheres to our format. The

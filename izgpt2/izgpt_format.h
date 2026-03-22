@@ -2,6 +2,7 @@
 #define IZGPT2_FORMAT_H
 
 #include <stdint.h>
+#include <sys/shm.h>
 
 // ============================================================
 //  GLOBAL CONSTANTS
@@ -308,7 +309,6 @@ izgpt2_layer_float_count(uint32_t H, uint32_t F)
         (H*F + H);         // W2 + b2
 }
 
-// ============================================================
 
 // ============================================================
 //  MODEL
@@ -369,9 +369,43 @@ typedef struct {
 } ao_gpt2_t;
 
 
-// The single API call to load the model in memory
+
+// --- API ---
+
+//  Structures for storing the model in a shared memory segment
+
+enum {
+       GPT2_OFFSET_HEADER,
+       GPT2_OFFSET_MODEL,
+       GPT2_OFFSET_LAYER_ARRAY,
+       GPT2_OFFSET_TOKEMB,
+       GPT2_OFFSET_POSEMB,
+       GPT2_OFFSET_TRANS_BLOCKS,
+       GPT2_OFFSET_LNF,
+       GPT2_OFFSET_TOTAL
+};
+
+typedef struct {
+    int id;
+    struct shmid_ds ds;
+    void* base;
+    size_t off[8];
+    ao_gpt2_t *model;
+} sm_gpt2_t;
+
+
+// The API call to load the model in memory
 
 ao_gpt2_t *load_model(const char *path);
+
+// The API call to release all memory associated with the model
+
+void destroy_model(ao_gpt2_t *m);
+
+
+// The API call to load the model in a new shared memory segment
+
+sm_gpt2_t *smload_model(const char *path);
 
 
 #endif
