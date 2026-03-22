@@ -549,8 +549,8 @@ static inline size_t align_up(size_t x, size_t a)
 
 
 // Function to do memory allocation for the model in a shared memory segment
-// (The object that this function returns uses relative offsets instead of
-// pointers; eavery pointer stores an offset as a positive integer.)
+// (The object that this function returns stores relative offsets instead of
+// pointers; pointer stores an offset as a positive integer.)
 
 sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
 {
@@ -679,6 +679,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     } else {
         fprintf( stdout, " [Info]  Attached to mem segment with ID: %d\n",id);
     }
+    smgpt->base = base;
 
     // flag segment as "ready to clean" (is gone when process dettaches/exists)
     if (shmctl( id, IPC_RMID, &ds ) == -1) {
@@ -712,12 +713,9 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     void* ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_HEADER] );
     memcpy( ptr, h, sizeof(*h) );
 
-    ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_MODEL] );
-    memcpy( ptr, m, sizeof(*m) );
-
     // make memory attachments
     m->layers = (ao_layer_t*) off[GPT2_OFFSET_LAYER_ARRAY];    // relative
-    ao_layer_t* layer_sm = (ao_layer_t*) SHM_PTR( base, m->layers );
+    m->layers = (ao_layer_t*) SHM_PTR( base, m->layers );      // local
 
     float* f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TRANS_BLOCKS] );
 
@@ -726,7 +724,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     f_sm += vocab_size * H + n_ctx * H;
 
     for (int l=0; l < m->n_layer; l++) {
-        ao_layer_t* lp = &( layer_sm[l] );
+        ao_layer_t* lp = &( m->layers[l] );
 
         lp->ln1.epsilon = -99.9e99;
         lp->ln1.gamma = f_sm + 1;
@@ -764,13 +762,18 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     m->ln_f.beta  = f_sm + H + 1;
     f_sm += 1 + 2*H;
 
+    // write the model toplevel struct to the memory segment
+    ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_MODEL] );
+    memcpy( ptr, m, sizeof(*m) );
+
+
 #ifdef _DEBUG3_
 {   // Set every element of the arrays to something specific to the array
     for (int n=0; n < vocab_size*H; ++n) m->wte[n] = 1.1;
     for (int n=0; n < n_ctx*H; ++n) m->wpe[n] = 1.2;
 
     for (int l=0; l < m->n_layer; l++) {
-        ao_layer_t* lp = &( layer_sm[l] );
+        ao_layer_t* lp = &( m->layers[l] );
 
         for (int n=0; n < H; ++n) lp->ln1.gamma[n] = 100 + l + 0.1;
         for (int n=0; n < H; ++n) lp->ln1.beta[n] = 100 + l + 0.2;
@@ -805,7 +808,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
              m->wpe[0], m->wpe[n_ctx*H-1] );
 
     for (int l=0; l < m->n_layer; l++) {
-        ao_layer_t* lp = &( layer_sm[l] );
+        ao_layer_t* lp = &( m->layers[l] );
         fprintf( stdout, " Layer: %d\n", l );
 
         fprintf( stdout, "  LN1 gamma: %7.2lf  %7.2lf \n", 
@@ -835,8 +838,8 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
                  lp->ffn.W1[0], lp->ffn.W1[F*H-1],
                  lp->ffn.b1[0], lp->ffn.b1[F-1] );
         fprintf( stdout, "  FFN W2: %7.2lf  %7.2lf     %7.2lf  %7.2lf \n", 
-                 lp->ffn.W2[0], lp->ffn.W2[F*H-1],
-                 lp->ffn.b2[0], lp->ffn.b2[F-1] );
+                 lp->ffn.W2[0], lp->ffn.W2[H*F-1],
+                 lp->ffn.b2[0], lp->ffn.b2[H-1] );
     }
 
     fprintf( stdout, " Final LayerNorm\b\n" );
@@ -873,7 +876,6 @@ sm_gpt2_t *smload_model(const char *path)
        fclose(f);
        return NULL;
     }
-    printf("PREMATURE EXIT\n");exit(0);//HACK
 
     ao_gpt2_t *m = sm->model;
 
@@ -897,10 +899,19 @@ sm_gpt2_t *smload_model(const char *path)
 
         case IZGPT2_BLK_TRANSFORMER_LAYER:
             load_layer(f, m, bh.layer_index, bh.payload_size, 1);
+#ifdef _DEBUG_
+            fprintf( stdout, " [DEBUG]  Epsilon for LN1/2: %g, %g \n",
+                     m->layers[bh.layer_index].ln1.epsilon,
+                     m->layers[bh.layer_index].ln2.epsilon );
+#endif
         break;
 
         case IZGPT2_BLK_FINAL_LAYERNORM:
             load_final_ln(f, m, bh.payload_size, 1);
+#ifdef _DEBUG_
+            fprintf( stdout, " [DEBUG]  Epsilon for LN_f: %g \n",
+                     m->ln_f.epsilon );
+#endif
         break;
 
         case IZGPT2_BLK_END:
