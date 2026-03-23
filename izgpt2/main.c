@@ -3,8 +3,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include <unistd.h>
+#include "utils.h"
 #include "izgpt_format.h"
-
 
 
 void dump_param1( ao_gpt2_t *model )
@@ -281,19 +282,47 @@ void dump_param3( ao_gpt2_t *model, int layer_idx )
 }
 
 
+#ifdef _DRIVER_
 int main( int argc, char *argv[] )
 {
-    ao_gpt2_t *model = load_model("model.izgpt2");
-  //ao_gpt2_t *model = load_model("fake.izgpt2");
-    destroy_model(model);
-  //sm_gpt2_t *sm = smload_model("model.izgpt2");
-  //ao_gpt2_t *model = sm->model;
+    if (argc < 3) {
+        printf("Supply arguments: '%s <num> <string>'\n", argv[0]);
+        return 0;
+    }
 
-// dump_param1( model );
-// dump_param2( model, 11 );
-// dump_param3( model, 0 );
+    if (!strcmp(argv[1], "0")) {    // display the "safetensors" JSON header
+        return izgpt_util_DumpSafetensors_header( argv[2] );
+    }
 
+    if (!strcmp(argv[1], "1") || !strcmp(argv[1], "2")) {   // load a model
+        ao_gpt2_t *model = load_model(argv[2]);
+
+        if (model)
+        if (!strcmp(argv[2], "2")) {    // dump data on the screen
+            // dump_param1( model );
+            // dump_param2( model, 11 );
+            // dump_param3( model, 0 );
+        }
+
+        if (model) destroy_model(model);
+    }
+
+    if (!strcmp(argv[1], "3")) {    // become a shmem process
+        sm_gpt2_t *sm = smload_model(argv[2]);
+        if (sm) fprintf( stdout, " [Info]  Shmem segment with ID: %d\n",sm->id);
+
+        while(1) sleep(1000);
+
+        if (sm) { free(sm->model); free(sm); }    // clean-up (never happens)
+    }
+
+    if (!strcmp(argv[1], "4")) {    // attach to a shmem
+        int id = atoi(argv[2]);
+        sm_gpt2_t *sm = smattach_model(id);
+        if (sm) fprintf( stdout, " [Info]  Shmem segment with ID: %d\n",sm->id);
+    }
 
     return 0;
 }
+#endif
 

@@ -56,8 +56,8 @@ int read_exact(FILE *f, void *ptr, size_t n)
     size_t iret = fread(ptr, 1, n, f);
 #ifdef _DEBUG_
     fprintf( stdout, " [DEBUG]  Read %ld bytes \n", iret );
-    perror("read_exact");
     if( iret != n ) {
+        perror("read_exact");
         fprintf( stdout, " [Error]  Read %ld instead of %ld bytes\n", iret, n );
     }
 #endif
@@ -69,7 +69,7 @@ int read_exact(FILE *f, void *ptr, size_t n)
 
 int load_file_header(FILE *f, izgpt2_file_header_t *h)
 {
-    if( !read_exact(f, h, sizeof(*h)) ) {
+    if (!read_exact(f, h, sizeof(*h))) {
         fprintf( stdout, " [Error]  Could not read header from stream\n" );
         return -1;
     }
@@ -197,7 +197,6 @@ int load_block_header(FILE *f, izgpt2_block_header_t *b)
 #ifdef _DEBUG_
     fprintf( stdout, " [DEBUG]  Loading block header\n" );
 #endif
-//printf("Sizeof: %ld\n", sizeof(*b));//HACK
     if (!read_exact(f, b, sizeof(*b))) {
        fprintf( stdout, " [Error]  Could not read 128-byte block\n" );
        return -1;
@@ -249,14 +248,14 @@ int load_token_embedding(FILE *f, ao_gpt2_t *m, uint64_t payload_size, int iop)
 
     if (!iop) {
         m->wte = malloc(count * sizeof(float));
-        if( !m->wte ) {
-            fprintf( stdout, " [Error]  Could not allocate %ld bytes\n", count);
+        if (!m->wte) {
+            fprintf( stdout, " [Error]  Could not allocate Wte \n" );
             return -1;
         }
     }
 
     if (!read_exact(f, m->wte, payload_size)) {
-        fprintf( stdout, " [Error]  Could not read parameters\n" );
+        fprintf( stdout, " [Error]  Could not read Wte\n" );
         return 1;
     }
 
@@ -277,13 +276,16 @@ int load_pos_embedding(FILE *f, ao_gpt2_t *m, uint64_t payload_size, int iop)
 
     if (iop==0) {
         m->wpe = malloc(count * sizeof(float));
-        if( !m->wpe ) {
-            fprintf( stdout, " [Error]  Could not allocate %ld bytes\n", count);
+        if (!m->wpe) {
+            fprintf( stdout, " [Error]  Could not allocate Wpe \n" );
             return -1;
         }
     }
 
-    if (!read_exact(f, m->wpe, payload_size)) return -1;
+    if (!read_exact(f, m->wpe, payload_size)) {
+        fprintf( stdout, " [Error]  Could not read Wpe\n" );
+        return 1;
+    }
 
     swap_f32_array(m->wpe, count);
 
@@ -307,11 +309,24 @@ int load_layer(FILE *f, ao_gpt2_t *m, int i, uint64_t payload_size, int iop)
     if (iop==0) {
         L->ln1.gamma = malloc(H*sizeof(float));
         L->ln1.beta  = malloc(H*sizeof(float));
+        if (!L->ln1.gamma || !L->ln1.beta) {
+            fprintf( stdout, " [Error]  Allocation of LN_1 failed\n" );
+            return -1;
+        }
     }
 
-    read_exact(f, L->ln1.gamma, H*sizeof(float));
-    read_exact(f, L->ln1.beta,  H*sizeof(float));
-    read_exact(f, &L->ln1.epsilon, sizeof(float));
+    if (!read_exact(f, L->ln1.gamma, H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN1 gamma\n" );
+        return 1;
+    }
+    if (!read_exact(f, L->ln1.beta,  H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN1 beta\n" );
+        return 1;
+    }
+    if (!read_exact(f, &L->ln1.epsilon, sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN1 epsilon \n" );
+        return 1;
+    }
 
     // Attention
     size_t HH = H*H;
@@ -319,8 +334,15 @@ int load_layer(FILE *f, ao_gpt2_t *m, int i, uint64_t payload_size, int iop)
     #define LOAD_VEC(ptr, n) do { \
         if (iop==0 ) { \
             ptr = malloc((n)*sizeof(float)); \
+            if (!ptr) { \
+                fprintf( stdout, " [Error]  Allocation in atten. failed\n" ); \
+                return -1; \
+            } \
         } \
-        read_exact(f, ptr, (n)*sizeof(float)); \
+        if (!read_exact(f, ptr, (n)*sizeof(float))) { \
+            fprintf( stdout, " [Error]  Could not read data in atten.\n" ); \
+            return 1; \
+        } \
     } while(0)
 
     LOAD_VEC(L->attn.Wq, HH);
@@ -339,11 +361,24 @@ int load_layer(FILE *f, ao_gpt2_t *m, int i, uint64_t payload_size, int iop)
     if (iop==0) {
         L->ln2.gamma = malloc(H*sizeof(float));
         L->ln2.beta  = malloc(H*sizeof(float));
+        if (!L->ln2.gamma || !L->ln2.beta) {
+            fprintf( stdout, " [Error]  Allocation of LN_2 failed\n" );
+            return -1;
+        }
     }
 
-    read_exact(f, L->ln2.gamma, H*sizeof(float));
-    read_exact(f, L->ln2.beta,  H*sizeof(float));
-    read_exact(f, &L->ln2.epsilon, sizeof(float));
+    if (!read_exact(f, L->ln2.gamma, H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN2 gamma\n" );
+        return 1;
+    }
+    if (!read_exact(f, L->ln2.beta,  H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN2 beta\n" );
+        return 1;
+    }
+    if (!read_exact(f, &L->ln2.epsilon, sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN2 epsilon\n" );
+        return 1;
+    }
 
     // FFN
     LOAD_VEC(L->ffn.W1, F*H);
@@ -397,11 +432,24 @@ int load_final_ln(FILE *f, ao_gpt2_t *m, uint64_t payload_size, int iop)
     if (iop==0) {
         m->ln_f.gamma = malloc(H*sizeof(float));
         m->ln_f.beta  = malloc(H*sizeof(float));
+        if (!m->ln_f.gamma || !m->ln_f.beta) {
+            fprintf( stdout, " [Error]  Allocation of LN_f failed\n" );
+            return -1;
+        }
     }
 
-    read_exact(f, m->ln_f.gamma, H*sizeof(float));
-    read_exact(f, m->ln_f.beta,  H*sizeof(float));
-    read_exact(f, &m->ln_f.epsilon, sizeof(float));
+    if (!read_exact(f, m->ln_f.gamma, H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN_f gamma\n" );
+        return 1;
+    }
+    if (!read_exact(f, m->ln_f.beta,  H*sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN_f beta\n" );
+        return 1;
+    }
+    if (!read_exact(f, &m->ln_f.epsilon, sizeof(float))) {
+        fprintf( stdout, " [Error]  Could not read LN_f epsilon\n" );
+        return 1;
+    }
 
     swap_f32_array(m->ln_f.gamma, H);
     swap_f32_array(m->ln_f.beta,  H);
@@ -433,30 +481,35 @@ ao_gpt2_t *load_model(const char *path)
        return NULL;
     }
 
-    for (uint64_t i = 0; i < fh.block_count; i++) {
+    int ierr=0;
+    for (uint64_t i = 0; i < fh.block_count && ierr==0; i++) {
 #ifdef _DEBUG_
         fprintf( stdout, " [DEBUG]  About to read block: %ld \n", i );
 #endif
 
         izgpt2_block_header_t bh;
-        if (load_block_header(f, &bh) != 0) return NULL;
+        if (load_block_header(f, &bh) != 0) {
+            fclose(f);
+            destroy_model(m);
+            return NULL;
+        }
 
         switch (bh.block_type) {
 
         case IZGPT2_BLK_TOKEN_EMBEDDING:
-            load_token_embedding(f, m, bh.payload_size, 0);
+            ierr = load_token_embedding(f, m, bh.payload_size, 0);
         break;
 
         case IZGPT2_BLK_POSITION_EMBEDDING:
-            load_pos_embedding(f, m, bh.payload_size, 0);
+            ierr = load_pos_embedding(f, m, bh.payload_size, 0);
         break;
 
         case IZGPT2_BLK_TRANSFORMER_LAYER:
-            load_layer(f, m, bh.layer_index, bh.payload_size, 0);
+            ierr = load_layer(f, m, bh.layer_index, bh.payload_size, 0);
         break;
 
         case IZGPT2_BLK_FINAL_LAYERNORM:
-            load_final_ln(f, m, bh.payload_size, 0);
+            ierr = load_final_ln(f, m, bh.payload_size, 0);
         break;
 
         case IZGPT2_BLK_END:
@@ -465,11 +518,15 @@ ao_gpt2_t *load_model(const char *path)
         default:
             fprintf( stdout, " [Error]  Unknown block type: %d\n",
                      bh.block_type);
-            return NULL;
+            ierr=1;
         }
     }
 
     fclose(f);
+    if (ierr) {
+        destroy_model(m);
+        return NULL;
+    }
     return m;
 }
 
@@ -499,6 +556,7 @@ void destroy_model(ao_gpt2_t *m)
 
             if (lp->ln2.gamma) free(lp->ln2.gamma);
             if (lp->ln2.beta) free(lp->ln2.beta);
+
             if (lp->ffn.W1) free(lp->ffn.W1);
             if (lp->ffn.b1) free(lp->ffn.b1);
             if (lp->ffn.W2) free(lp->ffn.W2);
@@ -529,10 +587,10 @@ void destroy_model(ao_gpt2_t *m)
 //    izgpt2_file_header_t;
 //    ao_gpt2_t;
 //    ao_layer_t [L];
-//    float [];    // token embedings
-//    float [];    // position embedings
-//    float [];    // transformer blocks
-//    float [];    // final LayerNorm arrays
+//    float [V * H];             // token embedings
+//    float [V * H];             // position embedings
+//    float [L * layer_size];    // transformer blocks
+//    float [1 + 2*H];           // final LayerNorm arrays
 //
 
 
@@ -541,11 +599,6 @@ static inline size_t align_up(size_t x, size_t a)
 {
     return (x + (a - 1)) & ~(a - 1);
 }
-
-// Macro to handle relative pointer arithmetic
-// (This is because we cnnot do "P + P" only "P - P" or "P + N")
-#define SHM_PTR( base, off ) \
-   ( ((uint8_t*) (base) + (size_t) (off)) )
 
 
 // Function to do memory allocation for the model in a shared memory segment
@@ -603,58 +656,61 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     off[GPT2_OFFSET_HEADER] = cursor;
     cursor += sizeof(izgpt2_file_header_t);
 
-    cursor = align_up( cursor, alignof(izgpt2_file_header_t) );
+    cursor = align_up( cursor, alignof(ao_gpt2_t) );
     off[GPT2_OFFSET_MODEL] = cursor;
     cursor += sizeof(ao_gpt2_t);
-#ifdef _DEBUG_
-    fprintf( stdout, " [DEBUG]  Header: %ld / %ld \n",
-             off[GPT2_OFFSET_HEADER], sizeof(izgpt2_file_header_t) );
-    fprintf( stdout, " [DEBUG]  Model toplevel: %ld / %ld \n",
-             off[GPT2_OFFSET_MODEL], sizeof(ao_gpt2_t) );
-#endif
 
     // add the array of layers
     cursor = align_up( cursor, alignof(ao_layer_t) );
     off[GPT2_OFFSET_LAYER_ARRAY] = cursor;
     cursor += sizeof(ao_layer_t) * L;
-#ifdef _DEBUG_
-    fprintf( stdout, " [DEBUG]  Layers: %ld / %ld \n",
-             off[GPT2_OFFSET_LAYER_ARRAY], sizeof(ao_layer_t) * L );
-#endif
+
+    // from this point on payloads are blocks of floats, so allign once
+    cursor = align_up( cursor, alignof(float) );
 
     // add token and position embeddings
     off[GPT2_OFFSET_TOKEMB] = cursor;
     cursor += sizeof(float) * vocab_size * H;
-#ifdef _DEBUG_
-    fprintf( stdout, " [DEBUG]  Token embeddings: %ld / %ld \n",
-             off[GPT2_OFFSET_TOKEMB], sizeof(float) * vocab_size * H );
-#endif
 
     off[GPT2_OFFSET_POSEMB] = cursor;
     cursor += sizeof(float) * n_ctx * H;
-#ifdef _DEBUG_
-    fprintf( stdout, " [DEBUG]  Position embeddings: %ld / %ld \n",
-             off[GPT2_OFFSET_POSEMB], sizeof(float) * n_ctx * H );
-#endif
 
     // per-layer 32-bit payloads cummulative size
     size_t layer_size = izgpt2_layer_float_count(H, F);
 
     // add size for transformer blocks
     off[GPT2_OFFSET_TRANS_BLOCKS] = cursor;
-    cursor += layer_size * L;
+    cursor += sizeof(float) * layer_size * L;
 
     // add size for final LayerNorm block
     off[GPT2_OFFSET_LNF] = cursor;
-    cursor += sizeof(float) * (H * H + 1);
+    cursor += sizeof(float) * (1 + 2*H);
 
     // end of segment
     off[GPT2_OFFSET_TOTAL] = cursor;
 
+#ifdef _DEBUG_
+    fprintf( stdout, " [DEBUG]  Shared memory pointer layout\n" );
+    fprintf( stdout, "  Header: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_HEADER], sizeof(izgpt2_file_header_t) );
+    fprintf( stdout, "  Model toplevel: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_MODEL], sizeof(ao_gpt2_t) );
+    fprintf( stdout, "  Layers: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_LAYER_ARRAY], sizeof(ao_layer_t) * L );
+    fprintf( stdout, "  Token embeddings: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_TOKEMB], sizeof(float) * vocab_size * H );
+    fprintf( stdout, "  Position embeddings: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_POSEMB], sizeof(float) * n_ctx * H );
+    fprintf( stdout, "  Transformer blocks: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_TRANS_BLOCKS], sizeof(float) * layer_size * L );
+    fprintf( stdout, "  Final LayerNorm: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_LNF], sizeof(float) * (1 + 2*H) );
+    fprintf( stdout, "  Total: @ %ld \n", off[GPT2_OFFSET_TOTAL] );
+#endif
 
     // create the shared memory segment
     struct shmid_ds ds;
-    int id = shmget(IPC_PRIVATE, cursor*sizeof(float), IPC_CREAT | 0600);
+    int id = shmget(IPC_PRIVATE, cursor, IPC_CREAT | 0600);
     if (id < 0) {
         fprintf( stdout, " [Error]  Could not create shared memory segment\n" );
         free(m);
@@ -665,6 +721,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
         fprintf( stdout, " [DEBUG]  Created mem segment with ID: %d\n",id);
 #endif
     }
+    smgpt->id = id;
 
     // attach to the memory segment
     void *base = shmat(id, NULL, 0);
@@ -701,7 +758,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
          printf("   time_t   shm_atime; %ld\n", (long) ds.shm_atime );
          printf("   time_t   shm_dtime; %ld\n", (long) ds.shm_dtime );
          printf("   time_t   shm_ctime; %ld\n", (long) ds.shm_ctime );
-         printf("   pid_t    shm_cpid;  %ld (PID of creator)\n", (long) ds.  shm_cpid );
+         printf("   pid_t    shm_cpid;  %ld (PID of creator)\n", (long) ds.shm_cpid );
          printf("   pid_t    shm_lpid;  %ld (PID of last shmat)\n", (long) ds.shm_lpid );
          printf("   shmatt_t shm_nattch; %d\n", (int) ds.shm_nattch );
          fprintf( stdout, " Manually remove with: 'ipcrm shm %d'\n", id );
@@ -709,7 +766,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     }
 
 
-    // copy structs to memory
+    // copy header to memory
     void* ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_HEADER] );
     memcpy( ptr, h, sizeof(*h) );
 
@@ -717,18 +774,19 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     m->layers = (ao_layer_t*) off[GPT2_OFFSET_LAYER_ARRAY];    // relative
     m->layers = (ao_layer_t*) SHM_PTR( base, m->layers );      // local
 
-    float* f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TRANS_BLOCKS] );
-
+    float* f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TOKEMB] );
     m->wte = f_sm;
-    m->wpe = f_sm + vocab_size * H;
-    f_sm += vocab_size * H + n_ctx * H;
 
+    f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_POSEMB] );
+    m->wpe = f_sm;
+
+    f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TRANS_BLOCKS] );
     for (int l=0; l < m->n_layer; l++) {
         ao_layer_t* lp = &( m->layers[l] );
 
         lp->ln1.epsilon = -99.9e99;
         lp->ln1.gamma = f_sm + 1;
-        lp->ln1.beta = f_sm + 1 + H;
+        lp->ln1.beta  = f_sm + 1 + H;
         f_sm += 1 + 2*H;
 
         lp->attn.Wq = f_sm;
@@ -743,7 +801,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
 
         lp->ln2.epsilon = -99.9e99;
         lp->ln2.gamma = f_sm + 1;
-        lp->ln2.beta = f_sm + 1 + H;
+        lp->ln2.beta  = f_sm + 1 + H;
         f_sm += 1 + 2*H;
 
         lp->ffn.act_kind = IZGPT2_ACT_NONE;
@@ -757,17 +815,13 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     }
 
     f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_LNF] );
-
+    m->ln_f.epsilon = -99.9e99;
+    *f_sm = m->ln_f.epsilon;      // real copy
     m->ln_f.gamma = f_sm + 1;
-    m->ln_f.beta  = f_sm + H + 1;
+    m->ln_f.beta  = f_sm + 1 + H;
     f_sm += 1 + 2*H;
 
-    // write the model toplevel struct to the memory segment
-    ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_MODEL] );
-    memcpy( ptr, m, sizeof(*m) );
-
-
-#ifdef _DEBUG3_
+#ifdef _DEBUG_
 {   // Set every element of the arrays to something specific to the array
     for (int n=0; n < vocab_size*H; ++n) m->wte[n] = 1.1;
     for (int n=0; n < n_ctx*H; ++n) m->wpe[n] = 1.2;
@@ -775,6 +829,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
     for (int l=0; l < m->n_layer; l++) {
         ao_layer_t* lp = &( m->layers[l] );
 
+        lp->ln1.epsilon = 1111.111;
         for (int n=0; n < H; ++n) lp->ln1.gamma[n] = 100 + l + 0.1;
         for (int n=0; n < H; ++n) lp->ln1.beta[n] = 100 + l + 0.2;
 
@@ -787,6 +842,7 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
         for (int n=0; n < H*H; ++n) lp->attn.Wo[n] = 200 + l + 0.7;
         for (int n=0; n < H  ; ++n) lp->attn.bo[n] = 200 + l + 0.8;
 
+        lp->ln2.epsilon = 3333.333;
         for (int n=0; n < H; ++n) lp->ln2.gamma[n] = 300 + l + 0.1;
         for (int n=0; n < H; ++n) lp->ln2.beta[n] = 300 + l + 0.2;
 
@@ -796,59 +852,21 @@ sm_gpt2_t *smalloc_model(const izgpt2_file_header_t *h)
         for (int n=0; n < H  ; ++n) lp->ffn.b2[n] = 400 + l + 0.4;
     }
 
+    m->ln_f.epsilon = 5555.555;
+    float* tmp = (float*) SHM_PTR( base, off[GPT2_OFFSET_LNF] );
+    *tmp = m->ln_f.epsilon;      // real copy
     for (int n=0; n < H; ++n) m->ln_f.gamma[n] = 5.1;;
     for (int n=0; n < H; ++n) m->ln_f.beta[n] = 5.2;
 
     // Print first and last element of every array (looking for overlaps)
-    fprintf( stdout, " [DEBUG]  Printing diagnostics\n" );
-    fprintf( stdout, " Embeddings\n" );
-    fprintf( stdout, "  wte: %7.2lf  %7.2lf \n", 
-             m->wte[0], m->wte[vocab_size*H-1] );
-    fprintf( stdout, "  wpe: %7.2lf  %7.2lf \n", 
-             m->wpe[0], m->wpe[n_ctx*H-1] );
-
-    for (int l=0; l < m->n_layer; l++) {
-        ao_layer_t* lp = &( m->layers[l] );
-        fprintf( stdout, " Layer: %d\n", l );
-
-        fprintf( stdout, "  LN1 gamma: %7.2lf  %7.2lf \n", 
-                 lp->ln1.gamma[0], lp->ln1.gamma[H-1] );
-        fprintf( stdout, "  LN1  beta: %7.2lf  %7.2lf \n", 
-                 lp->ln1.beta[0], lp->ln1.beta[H-1] );
-
-        fprintf( stdout, "  Attn Wq,bq: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
-                 lp->attn.Wq[0], lp->attn.Wq[H*H-1],
-                 lp->attn.bq[0], lp->attn.bq[H-1] );
-        fprintf( stdout, "  Attn Wk,bk: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
-                 lp->attn.Wk[0], lp->attn.Wk[H*H-1],
-                 lp->attn.bk[0], lp->attn.bk[H-1] );
-        fprintf( stdout, "  Attn Wv,bv: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
-                 lp->attn.Wv[0], lp->attn.Wv[H*H-1],
-                 lp->attn.bv[0], lp->attn.bv[H-1] );
-        fprintf( stdout, "  Attn Wo,bo: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
-                 lp->attn.Wo[0], lp->attn.Wo[H*H-1],
-                 lp->attn.bo[0], lp->attn.bo[H-1] );
-
-        fprintf( stdout, "  LN2 gamma: %7.2lf  %7.2lf \n", 
-                 lp->ln2.gamma[0], lp->ln2.gamma[H-1] );
-        fprintf( stdout, "  LN2  beta: %7.2lf  %7.2lf \n", 
-                 lp->ln2.beta[0], lp->ln2.beta[H-1] );
-
-        fprintf( stdout, "  FFN W1: %7.2lf  %7.2lf     %7.2lf  %7.2lf \n", 
-                 lp->ffn.W1[0], lp->ffn.W1[F*H-1],
-                 lp->ffn.b1[0], lp->ffn.b1[F-1] );
-        fprintf( stdout, "  FFN W2: %7.2lf  %7.2lf     %7.2lf  %7.2lf \n", 
-                 lp->ffn.W2[0], lp->ffn.W2[H*F-1],
-                 lp->ffn.b2[0], lp->ffn.b2[H-1] );
-    }
-
-    fprintf( stdout, " Final LayerNorm\b\n" );
-    fprintf( stdout, "  LNf gamma: %7.2lf  %7.2lf \n", 
-                 m->ln_f.gamma[0], m->ln_f.gamma[H-1] );
-    fprintf( stdout, "  LNF  beta: %7.2lf  %7.2lf \n", 
-                 m->ln_f.beta[0], m->ln_f.beta[H-1] );
+    print_diagnostics(m);
 }
 #endif
+
+    // write the initial model toplevel struct to the memory segment
+    // (after any model loading this needs to remain current)
+    ptr = (void*) SHM_PTR( base, off[GPT2_OFFSET_MODEL] );
+    memcpy( ptr, m, sizeof(*m) );
 
     return smgpt;
 }
@@ -871,7 +889,7 @@ sm_gpt2_t *smload_model(const char *path)
     }
 
     sm_gpt2_t *sm = smalloc_model(&fh);
-
+//printf("PREMATURE RETURN (to not load adata)\n"); return sm;//HACK
     if (!sm) {
        fclose(f);
        return NULL;
@@ -879,27 +897,34 @@ sm_gpt2_t *smload_model(const char *path)
 
     ao_gpt2_t *m = sm->model;
 
-    for (uint64_t i = 0; i < fh.block_count; i++) {
+    int ierr=0;
+    for (uint64_t i = 0; i < fh.block_count && ierr==0; i++) {
 #ifdef _DEBUG_
         fprintf( stdout, " [DEBUG]  About to read block: %ld \n", i );
 #endif
 
         izgpt2_block_header_t bh;
-        if (load_block_header(f, &bh) != 0) return NULL;
+        if (load_block_header(f, &bh) != 0) {
+            fclose(f);
+            free(sm->model);
+            free(sm);
+            return NULL;
+        }
 
         switch (bh.block_type) {
 
         case IZGPT2_BLK_TOKEN_EMBEDDING:
-            load_token_embedding(f, m, bh.payload_size, 1);
+            ierr = load_token_embedding(f, m, bh.payload_size, 1);
         break;
 
         case IZGPT2_BLK_POSITION_EMBEDDING:
-            load_pos_embedding(f, m, bh.payload_size, 1);
+            ierr = load_pos_embedding(f, m, bh.payload_size, 1);
         break;
 
         case IZGPT2_BLK_TRANSFORMER_LAYER:
-            load_layer(f, m, bh.layer_index, bh.payload_size, 1);
+            ierr = load_layer(f, m, bh.layer_index, bh.payload_size, 1);
 #ifdef _DEBUG_
+            if (ierr==0)
             fprintf( stdout, " [DEBUG]  Epsilon for LN1/2: %g, %g \n",
                      m->layers[bh.layer_index].ln1.epsilon,
                      m->layers[bh.layer_index].ln2.epsilon );
@@ -907,11 +932,17 @@ sm_gpt2_t *smload_model(const char *path)
         break;
 
         case IZGPT2_BLK_FINAL_LAYERNORM:
-            load_final_ln(f, m, bh.payload_size, 1);
+            ierr = load_final_ln(f, m, bh.payload_size, 1);
 #ifdef _DEBUG_
+            if (ierr==0)
             fprintf( stdout, " [DEBUG]  Epsilon for LN_f: %g \n",
                      m->ln_f.epsilon );
 #endif
+            if (ierr==0) {
+                float* tmp = (float*)
+                             SHM_PTR( sm->base, sm->off[GPT2_OFFSET_LNF] );
+                *tmp = m->ln_f.epsilon;      // real copy
+            }
         break;
 
         case IZGPT2_BLK_END:
@@ -920,12 +951,354 @@ sm_gpt2_t *smload_model(const char *path)
         default:
             fprintf( stdout, " [Error]  Unknown block type: %d\n",
                      bh.block_type);
-            return NULL;
+            ierr=1;
         }
     }
 
     fclose(f);
+    if (ierr) {
+        free(sm->model);
+        free(sm);
+        return NULL;
+    }
+
+    // on success, update the model toplevel struct to the memory segment
+    memcpy( (void*) SHM_PTR( sm->base, sm->off[GPT2_OFFSET_MODEL] ),
+             sm->model, sizeof(*m) );
 
     return sm;
 }
 
+
+// Function to build the pointers of a shared memory block that stores a model
+// The base pointer is what the pointers to data will be built with respoect to.
+// Optionally provide the offsets array if you need it filled, or send null.
+//
+// When the "0x01" bit in "flags" is set, "m->layers" will point to a newly
+// allocated array. When the "0x02" bit is set, the epsilons in the present
+// struct will be coied from their locations in the memory segments; this
+// implies that the memory segment is attached and the read will not fail;
+// this operation only makes sense if "0x01" is also set, otherwise it errors.
+// (This is useful when the calling process is meant to attach to a
+// memory segment owned by a different process, and consequently the layers
+// array will have invalid references.
+
+int build_shmem_model(ao_gpt2_t *m, size_t* off, const void* base,
+                      uint8_t flags)
+{
+    if (!m) {
+        fprintf( stdout, " [Error]  Model pointer is null\n" );
+        return 1;
+    }
+
+    if ((flags & 0x02) && !(flags & 0x01)) {
+        fprintf( stdout, " [Error]  Bit 2 canot be set when bit 1 is unset!\n");
+        return 2;
+    }
+
+    uint32_t L          = m->n_layer;
+    uint32_t NH         = m->n_head;
+    uint32_t H          = m->n_embd;
+    uint32_t F          = m->ffn_dim;
+    uint32_t n_ctx      = m->n_ctx;
+    uint32_t vocab_size = m->vocab_size;
+#ifdef _DEBUG_
+    fprintf( stdout, " [DEBUG]  Building Shared memory pointers\n" );
+    fprintf( stdout, " Transformer layers: %d \n", L);
+    fprintf( stdout, " Transformer heads: %d \n", NH);
+    fprintf( stdout, " Model size (embed. dim.): %d \n", H);
+    fprintf( stdout, " Feed-forward size: %d \n", F);
+    fprintf( stdout, " Context length (tokens): %d \n", n_ctx);
+    fprintf( stdout, " Vocabulary size: %d \n", vocab_size);
+#endif
+
+    // count size incrementally
+    size_t cursor=0;
+    size_t off_[8];
+    if (!off) off = off_;     // user internal array when one is not provided
+
+    // add the two main structs (header and model toplevel)
+    cursor = align_up( cursor, alignof(izgpt2_file_header_t) );
+    off[GPT2_OFFSET_HEADER] = cursor;
+    cursor += sizeof(izgpt2_file_header_t);
+
+    cursor = align_up( cursor, alignof(ao_gpt2_t) );
+    off[GPT2_OFFSET_MODEL] = cursor;
+    cursor += sizeof(ao_gpt2_t);
+
+    // add the array of layers
+    cursor = align_up( cursor, alignof(ao_layer_t) );
+    off[GPT2_OFFSET_LAYER_ARRAY] = cursor;
+    cursor += sizeof(ao_layer_t) * L;
+
+    // from this point on payloads are blocks of floats, so allign once
+    cursor = align_up( cursor, alignof(float) );
+
+    // add token and position embeddings
+    off[GPT2_OFFSET_TOKEMB] = cursor;
+    cursor += sizeof(float) * vocab_size * H;
+
+    off[GPT2_OFFSET_POSEMB] = cursor;
+    cursor += sizeof(float) * n_ctx * H;
+
+    // per-layer 32-bit payloads cummulative size
+    size_t layer_size = izgpt2_layer_float_count(H, F);
+
+    // add size for transformer blocks
+    off[GPT2_OFFSET_TRANS_BLOCKS] = cursor;
+    cursor += sizeof(float) * layer_size * L;
+
+    // add size for final LayerNorm block
+    off[GPT2_OFFSET_LNF] = cursor;
+    cursor += sizeof(float) * (1 + 2*H);
+
+    // end of segment
+    off[GPT2_OFFSET_TOTAL] = cursor;
+#ifdef _DEBUG_
+    fprintf( stdout, " [DEBUG]  Shared memory pointer layout\n" );
+    fprintf( stdout, "  Header: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_HEADER], sizeof(izgpt2_file_header_t) );
+    fprintf( stdout, "  Model toplevel: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_MODEL], sizeof(ao_gpt2_t) );
+    fprintf( stdout, "  Layers: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_LAYER_ARRAY], sizeof(ao_layer_t) * L );
+    fprintf( stdout, "  Token embeddings: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_TOKEMB], sizeof(float) * vocab_size * H );
+    fprintf( stdout, "  Position embeddings: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_POSEMB], sizeof(float) * n_ctx * H );
+    fprintf( stdout, "  Transformer blocks: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_TRANS_BLOCKS], sizeof(float) * layer_size * L );
+    fprintf( stdout, "  Final LayerNorm: @ %ld  s %ld \n",
+             off[GPT2_OFFSET_LNF], sizeof(float) * (1 + 2*H) );
+    fprintf( stdout, "  Total: @ %ld \n", off[GPT2_OFFSET_TOTAL] );
+#endif
+
+
+    // make memory attachments
+    m->layers = (ao_layer_t*) off[GPT2_OFFSET_LAYER_ARRAY];    // relative
+    m->layers = (ao_layer_t*) SHM_PTR( base, m->layers );      // local
+    ao_layer_t* sm_layers = m->layers;    // keep reference for copy
+    if (flags & 0x01) {
+        m->layers = (ao_layer_t*) malloc(sizeof(*(m->layers)) * L);
+        if (!m->layers) {
+            fprintf( stdout, " [Error]  Could not allocate layers array\n" );
+            return -1;
+        }
+    }
+
+    float* f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TOKEMB] );
+    m->wte = f_sm;
+
+    f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_POSEMB] );
+    m->wpe = f_sm;
+
+    f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_TRANS_BLOCKS] );
+    for (int l=0; l < m->n_layer; l++) {
+        ao_layer_t* lp = &( m->layers[l] );
+
+        if (flags & 0x02) {
+            lp->ln1.epsilon = sm_layers[l].ln1.epsilon;
+        }
+        lp->ln1.gamma = f_sm + 1;
+        lp->ln1.beta  = f_sm + 1 + H;
+        f_sm += 1 + 2*H;
+
+        lp->attn.Wq = f_sm;
+        lp->attn.bq = f_sm +   H*H;
+        lp->attn.Wk = f_sm +   H*H +   H;
+        lp->attn.bk = f_sm + 2*H*H +   H;
+        lp->attn.Wv = f_sm + 2*H*H + 2*H;
+        lp->attn.bv = f_sm + 3*H*H + 2*H;
+        lp->attn.Wo = f_sm + 3*H*H + 3*H;
+        lp->attn.bo = f_sm + 4*H*H + 3*H;
+        f_sm += 4*(H*H + H);
+
+        if (flags & 0x02) {
+            lp->ln2.epsilon = sm_layers[l].ln2.epsilon;
+        }
+        lp->ln2.gamma = f_sm + 1;
+        lp->ln2.beta  = f_sm + 1 + H;
+        f_sm += 1 + 2*H;
+
+        lp->ffn.act_kind = IZGPT2_ACT_NONE;
+        lp->ffn.act_param_count = 0;
+        lp->ffn.act_params = NULL;
+        lp->ffn.W1 = f_sm;
+        lp->ffn.b1 = f_sm + F*H;
+        lp->ffn.W2 = f_sm + F*H + F;
+        lp->ffn.b2 = f_sm + F*H + F + H*F;
+        f_sm += F*H + F + H*F + H;
+    }
+
+    f_sm = (float*) SHM_PTR( base, off[GPT2_OFFSET_LNF] );
+    if (flags & 0x02) {
+        m->ln_f.epsilon = *f_sm;
+    }
+    m->ln_f.gamma = f_sm + 1;
+    m->ln_f.beta  = f_sm + 1 + H;
+    f_sm += 1 + 2*H;
+
+    return 0;
+}
+
+
+// Function to attach to a shared memory segment
+
+sm_gpt2_t *smattach_model(int id)
+{
+    sm_gpt2_t *sm = malloc(sizeof(*sm));
+    ao_gpt2_t *m = malloc(sizeof(*m));
+    if (!sm || !m) {
+        if (sm) free(sm);
+        if (m) free(m);
+        return NULL;
+    }
+    size_t* off = sm->off;
+    sm->model = m;
+
+    sm->id = id;
+    sm->base = shmat(id, NULL, 0);
+    if (sm->base == (void*) -1) {
+        fprintf( stdout, " Error]  Could not attach to shmem with ID: %d\n",id);
+        free(sm);
+        free(m);
+        return NULL;
+    }
+
+    if (shmctl( id, IPC_STAT, &sm->ds ) == -1) {
+        fprintf( stdout, " [Error]  Could retrieve segment's status. Fatal.\n");
+        free(sm);
+        free(m);
+        return NULL;
+    } else {
+#ifdef _DEBUG_
+         printf("   struct ipc_perm shm_perm; (NOT SHOWN) \n");
+         printf("   size_t   shm_segsz; %ld\n", (long) sm->ds.shm_segsz );
+         printf("   time_t   shm_atime; %ld\n", (long) sm->ds.shm_atime );
+         printf("   time_t   shm_dtime; %ld\n", (long) sm->ds.shm_dtime );
+         printf("   time_t   shm_ctime; %ld\n", (long) sm->ds.shm_ctime );
+         printf("   pid_t    shm_cpid;  %ld (PID of creator)\n", (long) sm->ds.shm_cpid );
+         printf("   pid_t    shm_lpid;  %ld (PID of last shmat)\n", (long) sm->ds.shm_lpid );
+         printf("   shmatt_t shm_nattch; %d\n", (int) sm->ds.shm_nattch );
+#endif
+    }
+
+    // attach to header struct
+    izgpt2_file_header_t* h = (izgpt2_file_header_t*) sm->base;
+
+    // validate
+    if (memcmp(h->magic, "IZGPT2", 6) != 0) {
+        fprintf( stdout, " [Error]  Not a IZGPT2 formatted file\n" );
+        shmdt(sm->base);
+        free(sm);
+        free(m);
+        return NULL;
+#ifdef _DEBUG_
+    } else {
+       fprintf( stdout, " [DEBUG]  Magic (hdr) \"%.8s\"\n", (char*) sm->base );
+#endif
+    }
+
+    // build pointers
+    m->n_layer = h->n_layer;
+    m->n_head  = h->n_head;
+    m->n_embd  = h->n_embd;
+    m->ffn_dim = h->ffn_dim;
+    m->n_ctx   = h->n_ctx;
+    m->vocab_size = h->vocab_size;
+    build_shmem_model(sm->model, sm->off, sm->base, 0x01 | 0x02);
+#ifdef _DEBUG_
+    // printing offsets
+    fprintf( stdout, " [DEBUG]  Offsets:\n" );
+    fprintf( stdout, "   Header off: %ld \n", off[GPT2_OFFSET_HEADER] );
+    fprintf( stdout, "   Model off: %ld \n", off[GPT2_OFFSET_MODEL] );
+    fprintf( stdout, "   Blocks off: %ld \n", off[GPT2_OFFSET_TRANS_BLOCKS] );
+    print_diagnostics(m);
+#endif
+
+#ifdef _DEBUG_
+    // lift the model struct from the shared memory segment
+    m = (ao_gpt2_t*) SHM_PTR( sm->base, off[GPT2_OFFSET_MODEL] );
+    fprintf( stdout, " [DEBUG]  Lifted model struct contents \n" );
+    fprintf( stdout, " Transformer layers: %d \n", m->n_layer);
+    fprintf( stdout, " Transformer heads: %d \n", m->n_head);
+    fprintf( stdout, " Model size (embed. dim.): %d \n", m->n_embd);
+    fprintf( stdout, " Feed-forward size: %d \n", m->ffn_dim);
+    fprintf( stdout, " Context length (tokens): %d \n", m->n_ctx);
+    fprintf( stdout, " Vocabulary size: %d \n", m->vocab_size);
+    fprintf( stdout, " [DEBUG]  Showing \"epsilon\" of final LayerNorm: %g\n",
+             m->ln_f.epsilon );
+
+    // lift 1st layer's epsilon directly...
+    ao_layer_t* lp =
+          (ao_layer_t*) SHM_PTR( sm->base, off[GPT2_OFFSET_TRANS_BLOCKS] );
+    fprintf( stdout, " [DEBUG]  Lifted LN1.epsilon: %g \n", lp->ln1.epsilon );
+#endif
+
+    return sm;
+}
+
+
+// Function to provide diagnostics by printing 1st and last elements
+
+void print_diagnostics(ao_gpt2_t *m)
+{
+    uint32_t L          = m->n_layer;
+  //uint32_t NH         = m->n_head;
+    uint32_t H          = m->n_embd;
+    uint32_t F          = m->ffn_dim;
+    uint32_t n_ctx      = m->n_ctx;
+    uint32_t vocab_size = m->vocab_size;
+
+    fprintf( stdout, " [DEBUG]  Printing first/last elements of arrays\n" );
+    fprintf( stdout, " Embeddings\n" );
+    fprintf( stdout, "  wte: %7.2lf  %7.2lf \n", 
+             m->wte[0], m->wte[vocab_size*H-1] );
+    fprintf( stdout, "  wpe: %7.2lf  %7.2lf \n", 
+             m->wpe[0], m->wpe[n_ctx*H-1] );
+
+    for (int l=0; l < L; l++) {
+        ao_layer_t* lp = &( m->layers[l] );
+        fprintf( stdout, " Layer: %d\n", l );
+
+        fprintf( stdout, "  LN1 epsilon: %g \n", lp->ln1.epsilon );
+        fprintf( stdout, "  LN1 gamma: %7.2lf  %7.2lf \n", 
+                 lp->ln1.gamma[0], lp->ln1.gamma[H-1] );
+        fprintf( stdout, "  LN1  beta: %7.2lf  %7.2lf \n", 
+                 lp->ln1.beta[0], lp->ln1.beta[H-1] );
+
+        fprintf( stdout, "  Attn Wq,bq: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
+                 lp->attn.Wq[0], lp->attn.Wq[H*H-1],
+                 lp->attn.bq[0], lp->attn.bq[H-1] );
+        fprintf( stdout, "  Attn Wk,bk: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
+                 lp->attn.Wk[0], lp->attn.Wk[H*H-1],
+                 lp->attn.bk[0], lp->attn.bk[H-1] );
+        fprintf( stdout, "  Attn Wv,bv: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
+                 lp->attn.Wv[0], lp->attn.Wv[H*H-1],
+                 lp->attn.bv[0], lp->attn.bv[H-1] );
+        fprintf( stdout, "  Attn Wo,bo: %7.2lf  %7.2lf    %7.2lf  %7.2lf \n", 
+                 lp->attn.Wo[0], lp->attn.Wo[H*H-1],
+                 lp->attn.bo[0], lp->attn.bo[H-1] );
+
+        fprintf( stdout, "  LN2 epsilon: %g \n", lp->ln2.epsilon );
+        fprintf( stdout, "  LN2 gamma: %7.2lf  %7.2lf \n", 
+                 lp->ln2.gamma[0], lp->ln2.gamma[H-1] );
+        fprintf( stdout, "  LN2  beta: %7.2lf  %7.2lf \n", 
+                 lp->ln2.beta[0], lp->ln2.beta[H-1] );
+
+        fprintf( stdout, "  FFN W1: %7.2lf  %7.2lf     %7.2lf  %7.2lf \n", 
+                 lp->ffn.W1[0], lp->ffn.W1[F*H-1],
+                 lp->ffn.b1[0], lp->ffn.b1[F-1] );
+        fprintf( stdout, "  FFN W2: %7.2lf  %7.2lf     %7.2lf  %7.2lf \n", 
+                 lp->ffn.W2[0], lp->ffn.W2[H*F-1],
+                 lp->ffn.b2[0], lp->ffn.b2[H-1] );
+    }
+
+    fprintf( stdout, " Final LayerNorm\b\n" );
+    fprintf( stdout, "  LNf epsilon: %g \n", m->ln_f.epsilon );
+    fprintf( stdout, "  LNf gamma: %7.2lf  %7.2lf \n", 
+                 m->ln_f.gamma[0], m->ln_f.gamma[H-1] );
+    fprintf( stdout, "  LNF  beta: %7.2lf  %7.2lf \n", 
+                 m->ln_f.beta[0], m->ln_f.beta[H-1] );
+    fprintf( stdout, " =========== END ========== \n" );
+}

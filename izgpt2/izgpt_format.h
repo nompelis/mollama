@@ -398,6 +398,12 @@ typedef struct {
 } sm_gpt2_t;
 
 
+// Macro to handle relative pointer arithmetic
+// (This is because we cannot do "P + P" only "P - P" or "P + N")
+#define SHM_PTR( base, off ) \
+   ( ((uint8_t*) (base) + (size_t) (off)) )
+
+
 // The API call to load the model in memory
 
 ao_gpt2_t *load_model(const char *path);
@@ -411,6 +417,12 @@ void destroy_model(ao_gpt2_t *m);
 
 sm_gpt2_t *smload_model(const char *path);
 
+int build_shmem_model(ao_gpt2_t *m, size_t* off, const void* base,
+                      uint8_t flags);
+
+sm_gpt2_t *smattach_model(int id);
+
+void print_diagnostics(ao_gpt2_t *m);
 
 #endif
 
