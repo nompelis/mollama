@@ -390,9 +390,7 @@ typedef struct {
     struct shmid_ds ds;   // data from last operation on segment
     void* base;           // base pointer in local memory space
     size_t off[8];        // offsets for different structs
-    ao_gpt2_t *model;     // Once loaded, pointers to structs are relative,
-                          // pointer to layers structs is relative, and all
-                          // pointers to payloads are absolute for the owner.
+    ao_gpt2_t *model;     // Once loaded, pointers to structs are local.
                           // Non-owner processes need to recreate payload
                           // pointers from the offsets.
 } sm_gpt2_t;

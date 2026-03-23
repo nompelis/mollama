@@ -258,9 +258,16 @@ typedef struct {
     struct shmid_ds ds;   // data from last operation on segment
     void* base;           // base pointer in local memory space
     size_t off[8];        // offsets for different structs
-    ao_gpt2_t *model;     // Once loaded, pointers to structs are relative,
+    ao_gpt2_t *model;     // Once loaded, pointers to structs are local.
+                          // Non-owner processes need to recreate payload
+                          // pointers from the offsets.
 } sm_gpt2_t;
 ```
+The owner process of the shared memory segment interprets pointers as local
+references. Any attaching process _must_ call the function ```build_shmem_model()```
+to localize the model in its memory space; this happens automatically when
+the ```sm_gpt2_t *smattach_model(int id)``` function is called.
+
 The following constants show the order of the offsets and access the
 individual offset slots in the ```off[]``` array.
 ```
