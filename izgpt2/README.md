@@ -1,4 +1,4 @@
-# The C loader of the GPT2 model from HuggingFace
+# The C loader of the GPT-2 model from HuggingFace
 
 This code uses Python and related libraries to retrieve the model weights
 from HuggingFace and bring them to a file that adheres to our format. The
@@ -15,10 +15,10 @@ etc, while it remains readable by its accompagnying codebase.
 
 ## Model representation
 
-The following is a representation of the GPT2 model as it is percieved when
+The following is a representation of the GPT-2 model as it is percieved when
 processing tokens in practice (this is the essential order). Multiple layers
-of the **transformer block** exist (e.g. 12 for GPT2 "0.1B parameters" model),
-with **residual connections** around them. This is an **encoder only**
+of the **transformer block** exist (e.g. 12 for GPT-2 "0.1B parameters" model),
+with **residual connections** around them. This is an **decoder only**
 architecture.
 
 According to the **machine learing literature**, tokens are represented as
@@ -29,9 +29,9 @@ we store matrices as blocks of memory. The index that unrolls fastest is
 the _second index_, such that a *matvec* operation like the following makes
 sense:
 ```
-for (int i = 0; i < ROWS; ++i) {
+for (int i = 0; i < ROWS; ++i) {       // first index unrolls last
     real_t r=0.0;
-    for (int j = 0; j < COLS; ++j)
+    for (int j = 0; j < COLS; ++j)     // second index unrolls first
         r += mat[i * COLS + j] * vec[j]
     out[i] = r;
 }
@@ -40,10 +40,12 @@ The benefits to such a layout are mostly optimization related.
 
 ### Token embeddings
 
-Embeddings are vectors of **768 32-bit floats** for GPT2, and there are 50257
-vectors for the embeddings; this size is stored in the variable ```vocab_size```
-in our format. The number 768 is the **hidden dimension**, is denoted ny
-**H**, and it is stored in the variable ```n_embd``` in our data structures.
+Embeddings are vectors of **768 32-bit floats** for GPT-2 "0.1B", and there
+are 50257 vectors for the embeddings in this model; this size is stored in
+the variable ```vocab_size``` in our format. The number 768 is the
+**hidden dimension**, is denoted ny **H**, and it is stored in the variable
+```n_embd``` in our data structures. (Other GPT-2 models have larger hidden
+dimensions.)
 
 When loaded in memory (in row-major format), this block of memory is:
 ````
@@ -58,7 +60,9 @@ TOKEN EMBEDDING PAYLOAD
 These embeddings have the same dimension as the token embeddings (H), but
 they are sized by the **context length**, which is 1024 for this model.
 The context length is denoted by **C**; this is stored in the variable
-```n_ctx``` in our data structures.
+```n_ctx``` in our data structures. (Other GPT-2 models have larger
+context lengths, and more modern inference systems have rotating
+mebeddings for dynamically extending context length.)
 
 When loaded in memory (in row-major format), the block of memory is:
 ```
@@ -81,12 +85,12 @@ into equal parts across heads. (This is such that each head can perform
 scaled dot-product attention scoring based on fewer features.) The only
 implication in terms of memory is that there are **num_head** C x C
 blocks of 32-bit floats that are used during inference when multi-head
-atteion is threaded in parallel, but the parameter count is the same.
+atteion is threaded in parallel, but the parameter count is unchanged.
 
 The **feed-forward** layer "_expands_" the hidden dimension from H to
-**F = 4 x H** in the GPT2 model. The expanded vector passes element-wise through
-the activation function, and then is recompressed via another affine operation
-down to H hidden dimensions.
+**F = 4 x H** in the GPT-2 model. The expanded vector passes element-wise
+through the activation function, and then is recompressed via another affine
+operation down to H hidden dimensions.
 
 The layout of a single transformer block looks like this:
 ```
@@ -148,7 +152,7 @@ a small value) to avoid numerical issues.
 Once the **final token** in the context has been processed through the
 transformer layers, a single embedding/token vector is produced. This vector
 is mapped through an expansion to the vocabulary size to produce **logits**.
-In the GPT2 model, the same vector as the _embeddings_ is used to transform
+In the GPT-2 model, the same matrix as the _embeddings_ is used to transform
 back "_from token to vocabulary_" by producing logits; this is because the
 embeddings are intuitively related to the inverse transformation. The matrix
 used to produce the logits is the transpose of the matrix of embedding
@@ -228,11 +232,11 @@ typedef struct {
 ### Flattened model loading
 
 The model can be loaded into a **POSIX shared memory segment** in a flattened
-array, with individual blocks are serialized in the same order that adhere
+array, where individual blocks are serialized in the same order that adhere
 to ***non-packed C structs***. That is, the structs and the array of layer
 structs have the layout that the host prefers for computation. However, at
 the top of the segment the (packed) struct that is the header of the file
-from which the model was loaded is found. The leyout in memory looks like
+from which the model was loaded) is found. The leyout in memory looks like
 this:
 ```
 // ============================================================
@@ -251,7 +255,7 @@ this:
 ```
 
 A convenient struct is used to handle operations via the shared memory
-segment, especially when the process tht did not create it attaches:
+segment, especially when the process that did not create it attaches to it:
 ```
 typedef struct {
     int id;               // OS level POSIX shared memory segment ID
@@ -266,7 +270,8 @@ typedef struct {
 The owner process of the shared memory segment interprets pointers as local
 references. Any attaching process _must_ call the function ```build_shmem_model()```
 to localize the model in its memory space; this happens automatically when
-the ```sm_gpt2_t *smattach_model(int id)``` function is called.
+the ```sm_gpt2_t *smattach_model(int id)``` function is called to return
+a pointer to the accessor struct.
 
 The following constants show the order of the offsets and access the
 individual offset slots in the ```off[]``` array.
@@ -285,4 +290,4 @@ enum {
 
 
 - - -
-IN 2026/03/23
+IN 2026/03/29
